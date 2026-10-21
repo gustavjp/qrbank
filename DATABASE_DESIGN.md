@@ -592,7 +592,8 @@ Constraints:
 - CHECK(id <> reverses_transaction_id)
 - CHECK(amount <> 0)
 - CHECK(balance_after = balance_before + amount)
-- UNIQUE(id, classroom_id, enrollment_id)
+- UNIQUE(id, classroom_id), supporting classroom-safe composite references
+- UNIQUE(id, classroom_id, enrollment_id), supporting account-safe composite references
 
 Ledger rows are inserted only for successful, committed financial events. Rejected requests belong in FinancialRequest, not the ledger.
 

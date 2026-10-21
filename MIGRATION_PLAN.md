@@ -551,6 +551,7 @@ Core constraints:
 - balance_after = balance_before + amount
 - CHECK(id <> reverses_transaction_id)
 - partial UNIQUE(reverses_transaction_id) WHERE not null
+- UNIQUE(id, classroom_id)
 - UNIQUE(id, classroom_id, enrollment_id)
 
 Composite tenant-safe foreign keys:
@@ -1082,6 +1083,7 @@ During migration dependency review, the following prerequisite unique keys were 
 - JobAssignment: `UNIQUE(id, classroom_id)`
 - RewardPurchase: `UNIQUE(id, classroom_id)`
 - AutomationRun: `UNIQUE(id, classroom_id)`
+- FinancialTransaction: `UNIQUE(id, classroom_id)`, used by classroom-safe inventory-event references
 
 These do not change approved product behavior.
 
