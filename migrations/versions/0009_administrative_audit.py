@@ -1,7 +1,7 @@
 """administrative audit log
 
 Revision ID: 0009_administrative_audit
-Revises: 0008_automation_and_scheduled_payments
+Revises: 0008_scheduled_payments
 """
 from typing import Sequence, Union
 
@@ -10,7 +10,7 @@ import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
 
 revision: str = "0009_administrative_audit"
-down_revision: Union[str, Sequence[str], None] = "0008_automation_and_scheduled_payments"
+down_revision: Union[str, Sequence[str], None] = "0008_scheduled_payments"
 branch_labels = None
 depends_on = None
 
