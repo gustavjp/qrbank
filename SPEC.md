@@ -241,25 +241,57 @@ The teacher should be able to enter a dedicated Scan Mode quickly from the class
 
 # 15. QR Scan Workflow
 
-The existing workflow is:
+The normal workflow is:
 
     Student scan
-    -> Quick Action scan
+    -> Quick Action or Action scan
     -> Transaction
 
-The first scan selects a student. The second scan identifies an action and executes it against the selected student.
+QRBank V1 uses generic, human-readable, classroom-contextual QR commands.
 
-Legacy payload examples include STUDENT:01 and QUICK:QA1. The new implementation does not need to preserve these literal strings internally and may use secure opaque scan tokens, but the rapid two-scan user experience must be preserved.
+Required command formats:
+
+    STUDENT:<StudentID>
+    QUICK:<QuickActionID>
+    ACTION:<ActionID>
+
+Examples:
+
+    STUDENT:01
+    QUICK:QA1
+    ACTION:A01
+
+A STUDENT command selects the matching active enrollment within the currently active classroom.
+
+A QUICK command resolves that classroom's Quick Action mapping, then executes the assigned Action for the selected student.
+
+An ACTION command bypasses the Quick Action shortcut mapping and directly executes the matching active Action in the currently active classroom for the selected student.
+
+Quick Action and Action scans must not perform a financial transaction when no student is selected.
+
+The active classroom is required context for scanning. Scan Mode must make the active classroom highly visible and should not casually switch classrooms while scanning.
 
 ---
 
-# 16. QR Token Requirements
+# 16. QR Command Requirements
 
-QR payloads should not contain student names, teacher emails, database credentials, or sensitive personal information.
+QR commands are operational identifiers, not authentication credentials.
 
-The preferred architecture should use unique opaque tokens or an equally safe mechanism.
+QR payloads must not contain student names, teacher emails, passwords, database credentials, or other unnecessary sensitive information.
 
-A teacher should be able to view, download, print, disable, and regenerate a QR. Regenerating a QR should invalidate the previous token without changing the student or transaction history.
+Student, Quick Action, and Action identifiers may be generic within a classroom. For example, multiple classrooms may each contain Student 01 or Action A01.
+
+The server interprets a QR command only within the authenticated teacher's currently active classroom and must still perform all normal authorization and financial validation.
+
+Because a generic code such as STUDENT:01 is ambiguous across classrooms, physical student cards should prominently display a human-readable classroom identifier separately from the QR itself. Scan Mode must also prominently display the active classroom.
+
+Default Quick Action QR codes such as QUICK:QA1 may be reused across classrooms while each classroom independently defines what QA1 maps to.
+
+Direct Action QR codes such as ACTION:A01 allow teachers to print and scan actions that are not included on the default Quick Action sheet.
+
+Disabled or inactive students, Quick Actions, or Actions must be rejected for new scan activity.
+
+The command protocol may be extended later with additional TYPE:ID commands if a future feature requires them.
 
 ---
 
@@ -689,11 +721,21 @@ Decorative styling must not compromise scanning. A QR test/preview feature is de
 
 ---
 
-# 58. QR Regeneration
+# 58. QR Reprinting and Identifier Changes
 
-Teachers should be able to regenerate the QR token for a scan-enabled entity.
+QR codes are deterministic representations of the configured classroom-contextual command, so teachers may re-download or reprint the same QR at any time.
 
-The old QR becomes invalid, the new QR becomes active, and identity, balances, and transaction history remain unchanged.
+Examples:
+
+    STUDENT:01
+    QUICK:QA1
+    ACTION:A01
+
+There is no secret QR token that normally needs rotation.
+
+If the teacher changes the StudentID, QuickActionID, or ActionID, the generated QR command changes accordingly. Historical financial records must remain unchanged.
+
+Inactive or disabled entities must no longer be accepted for new scan operations even if an older printed QR still exists.
 
 ---
 
@@ -920,7 +962,9 @@ Required scenarios include:
 - valid and invalid student scans
 - malformed QR scan
 - valid and invalid Quick Actions
+- valid and invalid direct Action scans
 - Quick Action without selected student
+- direct Action without selected student
 - +1, +5, +10, -1, -5, -10
 - insufficient balance
 - exact-zero balance
