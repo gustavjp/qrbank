@@ -1505,12 +1505,14 @@ For scan-enabled codes, the UI must warn that previously printed QR codes using 
 
 Benefit: teachers can correct naming or numbering mistakes without corrupting history.
 
-## Decision 4 — Reward fulfillment history
+## Decision 4 — Reward fulfillment history — APPROVED
 
-**Recommendation:** Store both RewardPurchase.fulfillment_status for fast current-state reads and append RewardFulfillmentEvent rows for status history.
+**Approved behavior:** Store both RewardPurchase.fulfillment_status for fast current-state reads and append-only RewardFulfillmentEvent rows for fulfillment/redemption history.
+
+Fulfillment changes do not create financial transactions unless there is a separate financial action such as a purchase reversal/refund.
 
 Benefit: privileges such as Homework Pass can show when they were redeemed or changed, while the store UI remains simple and fast.
 
 ---
 
-Once these four decisions are approved, the schema is sufficiently defined to create the first Alembic migration plan. Production migrations should still be reviewed before execution.
+All four database decisions are approved. The schema is sufficiently defined to proceed to migration planning. Production migrations must still be proposed and reviewed before execution.
