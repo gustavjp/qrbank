@@ -1495,15 +1495,15 @@ If a future student account represents the same person across independently crea
 
 Benefit: substantially safer privacy and tenant boundaries.
 
-## Decision 3 — Editing human-readable QR IDs
+## Decision 3 — Editing human-readable QR IDs — APPROVED
 
-**Recommendation:** Allow StudentID, ActionID, QuickActionID, JobID, RewardID, and similar classroom-facing codes to be changed by an authorized teacher.
+**Approved behavior:** Authorized teachers may change StudentID, ActionID, QuickActionID, JobID, RewardID, and similar classroom-facing codes.
 
 The internal UUID never changes. The change is written to AdminAuditEvent and historical transactions preserve snapshots.
 
-For scan-enabled codes, the UI must warn that previously printed QR codes using the old code will stop working.
+For scan-enabled codes, the UI must warn that previously printed QR codes using the old code will stop working and should be reprinted.
 
-Benefit: teachers can correct naming mistakes without corrupting history.
+Benefit: teachers can correct naming or numbering mistakes without corrupting history.
 
 ## Decision 4 — Reward fulfillment history
 
