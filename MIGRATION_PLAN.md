@@ -1133,9 +1133,9 @@ Before actual Alembic revision files are generated, the following implementation
 
 This keeps the values constrained but makes future additions such as new roles, reward states, sources, and automation states easier to migrate.
 
-## Decision 2 — Initial migration packaging
+## Decision 2 — Initial migration packaging — APPROVED
 
-**Recommendation:** use the 10 ordered domain migrations in this document rather than one giant initial migration.
+**Approved behavior:** use the 10 ordered domain migrations in this document rather than one giant initial migration.
 
 This makes dependency review, debugging, test failures, and future maintenance clearer while still producing the same final schema.
 
