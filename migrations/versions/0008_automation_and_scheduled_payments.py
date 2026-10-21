@@ -1,7 +1,7 @@
 """automation run and scheduled payment idempotency
 
-Revision ID: 0008_automation_and_scheduled_payments
-Revises: 0007_rewards_purchase_and_inventory
+Revision ID: 0008_scheduled_payments
+Revises: 0007_rewards_inventory
 """
 from typing import Sequence, Union
 
@@ -9,8 +9,8 @@ from alembic import op
 import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
 
-revision: str = "0008_automation_and_scheduled_payments"
-down_revision: Union[str, Sequence[str], None] = "0007_rewards_purchase_and_inventory"
+revision: str = "0008_scheduled_payments"
+down_revision: Union[str, Sequence[str], None] = "0007_rewards_inventory"
 branch_labels = None
 depends_on = None
 
