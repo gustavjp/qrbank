@@ -1,6 +1,6 @@
 """reward purchases fulfillment and inventory history
 
-Revision ID: 0007_rewards_purchase_and_inventory
+Revision ID: 0007_rewards_inventory
 Revises: 0006_behavior_history
 """
 from typing import Sequence, Union
@@ -9,7 +9,7 @@ from alembic import op
 import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
 
-revision: str = "0007_rewards_purchase_and_inventory"
+revision: str = "0007_rewards_inventory"
 down_revision: Union[str, Sequence[str], None] = "0006_behavior_history"
 branch_labels = None
 depends_on = None
