@@ -3,6 +3,8 @@ from __future__ import annotations
 import uuid
 
 import pytest
+from alembic.config import Config
+from alembic.script import ScriptDirectory
 from sqlalchemy import inspect, text
 from sqlalchemy.exc import IntegrityError
 
@@ -394,3 +396,9 @@ def test_scheduled_payment_period_uniqueness(engine) -> None:
                 ),
                 {"id": u(), "c": classroom_id, "e": enrollment_id},
             )
+
+
+def test_alembic_revision_ids_fit_version_table() -> None:
+    script = ScriptDirectory.from_config(Config("alembic.ini"))
+    for revision in script.walk_revisions():
+        assert len(revision.revision) <= 32, revision.revision
