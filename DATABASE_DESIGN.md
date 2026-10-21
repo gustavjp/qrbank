@@ -1485,11 +1485,11 @@ This means a classroom can use, for example, a starting balance of 50 or 100 wit
 
 Benefit: ledger SUM always reconstructs the complete current balance without requiring a hidden baseline field.
 
-## Decision 2 — Student sharing across unrelated teachers
+## Decision 2 — Student sharing across unrelated teachers — APPROVED
 
-**Recommendation:** V1 should not globally deduplicate or deliberately share Student rows across unrelated teacher tenants.
+**Approved behavior:** V1 will not globally deduplicate or deliberately share Student rows across unrelated teacher tenants.
 
-A Student may be reused across classrooms when the authorized user already has legitimate access to that Student through their classrooms, but there should be no global student lookup.
+A Student may be reused across classrooms when an authorized user already has legitimate access to that Student through their classrooms, but there will be no global student lookup or automatic cross-teacher matching.
 
 If a future student account represents the same person across independently created Student rows, an account-linking layer can connect those identities without rewriting historical Enrollment or ledger data.
 
