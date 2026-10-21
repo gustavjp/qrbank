@@ -286,7 +286,7 @@ Primary key and FK:
 Important columns:
 
 - timezone text, default America/New_York
-- starting_balance integer, default 100
+- starting_balance integer, default 0
 - weekly_allowance_enabled boolean
 - weekly_allowance_amount integer
 - weekly_allowance_day smallint
@@ -1473,13 +1473,15 @@ Mitigation: financial row remains immutable; reason attachment is on BehaviorEve
 
 The following decisions should be approved before migrations are created.
 
-## Decision 1 — Opening balance
+## Decision 1 — Opening balance — APPROVED
 
-**Recommendation:** Every nonzero starting balance should be posted as an Opening Balance FinancialTransaction when the Enrollment is created.
+**Approved behavior:** The system default classroom starting balance is 0. Teachers may configure a different starting balance in Classroom Settings.
 
-The Enrollment begins conceptually at zero, then the opening transaction moves it to the configured starting balance in the same creation workflow.
+When an Enrollment is created, it begins conceptually at zero. If that classroom's configured starting balance is nonzero, QRBank posts an Opening Balance FinancialTransaction in the same creation workflow to move the Enrollment from 0 to the configured value.
 
-If starting balance is zero, no zero-value financial transaction is created.
+If the configured starting balance is 0, no zero-value financial transaction is created.
+
+This means a classroom can use, for example, a starting balance of 50 or 100 without changing the system-wide default.
 
 Benefit: ledger SUM always reconstructs the complete current balance without requiring a hidden baseline field.
 
