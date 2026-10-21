@@ -307,28 +307,32 @@ Do not create duplicate financial implementations.
 
 ---
 
-# 12. QR Token Architecture
+# 12. QR Command Protocol Architecture
 
-Propose a secure QR token strategy.
+QRBank V1 uses generic, human-readable, classroom-contextual QR commands.
+
+Required formats:
+
+- `STUDENT:<StudentID>`
+- `QUICK:<QuickActionID>`
+- `ACTION:<ActionID>`
 
 Requirements:
 
+- the teacher must have an active classroom selected before scanning
+- IDs are resolved only within that authenticated classroom context
+- STUDENT selects the matching active enrollment
+- QUICK resolves that classroom's Quick Action mapping
+- ACTION directly resolves a configured Action
+- QUICK and ACTION require a selected student
+- QR commands are not authentication credentials
 - do not encode student names or sensitive personal data
-- avoid ambiguous classroom-local identifiers
-- allow QR regeneration
-- allow old token invalidation
-- support students
-- support Quick Actions
-- potentially support future scan-enabled entities
+- physical student cards should print a classroom identifier separately from the QR
+- Scan Mode must make the active classroom prominent and stable
+- inactive/unknown identifiers must be rejected
+- no opaque-token generation/rotation subsystem is required for V1
 
-Discuss:
-
-- token randomness
-- lookup strategy
-- token rotation
-- active/inactive status
-- whether token hashes should be stored
-- abuse/rate-limit considerations
+Discuss the safety implications of generic commands and how UI, authorization, validation, and scanner state reduce wrong-classroom and malformed-scan risk.
 
 The exact database implementation will be reviewed separately.
 
@@ -340,6 +344,7 @@ Explain how QRBank should generate:
 
 - individual student QR codes
 - individual Quick Action QR codes
+- individual direct Action QR codes
 - PNG
 - SVG
 - bulk QR packages
@@ -529,7 +534,8 @@ At minimum consider:
 - SQL injection
 - brute-force login attempts
 - password-reset abuse
-- QR token guessing
+- forged or malformed QR commands
+- wrong-classroom scanning with generic QR identifiers
 - duplicate financial requests
 - privilege escalation
 - leaked secrets
@@ -714,7 +720,7 @@ Examples might include:
 - frontend architecture
 - authentication strategy
 - internal student/enrollment model
-- QR token strategy
+- QR command protocol
 - scheduling mechanism
 - deployment process
 - reward inventory behavior
