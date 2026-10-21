@@ -1127,9 +1127,9 @@ Mitigation: use only the narrowly necessary reversal invariant trigger; keep nor
 
 Before actual Alembic revision files are generated, the following implementation choices should be approved.
 
-## Decision 1 — Status/category representation
+## Decision 1 — Status/category representation — APPROVED
 
-**Recommendation:** use PostgreSQL text columns with named CHECK constraints rather than native PostgreSQL ENUM types for V1.
+**Approved behavior:** use PostgreSQL text columns with named CHECK constraints rather than native PostgreSQL ENUM types for V1.
 
 This keeps the values constrained but makes future additions such as new roles, reward states, sources, and automation states easier to migrate.
 
