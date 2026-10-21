@@ -502,6 +502,7 @@ Important columns:
 
 Constraints:
 
+- UNIQUE(id, classroom_id), supporting composite tenant FKs
 - composite FK (enrollment_id, classroom_id)
 - composite FK (job_id, classroom_id)
 - partial UNIQUE(enrollment_id, job_id) WHERE ended_on IS NULL
@@ -632,6 +633,10 @@ Important columns:
 - rejected_count integer
 - error_summary text nullable
 
+Constraints:
+
+- UNIQUE(id, classroom_id), supporting composite tenant FKs
+
 Multiple attempts for the same classroom and period are allowed. This table is not the duplicate-payment guard.
 
 ## 5.19 scheduled_payments
@@ -716,6 +721,7 @@ Important columns:
 
 Constraints:
 
+- UNIQUE(id, classroom_id), supporting composite tenant FKs
 - classroom-safe composite FKs
 - purchase transaction belongs to the same classroom/enrollment
 
