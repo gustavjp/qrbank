@@ -920,6 +920,8 @@ Every classroom request should start from:
 
 V1 may expose only owner, but the data model already supports teacher, assistant, and school_admin.
 
+One user has at most one active membership per classroom. The `owner` role includes normal teacher permissions, so an owner does not need a duplicate `teacher` membership row.
+
 Role semantics belong in service authorization policies, not scattered route conditionals.
 
 At most one active owner is enforced in PostgreSQL. The service ensures an active classroom is not left ownerless.
