@@ -1139,12 +1139,12 @@ This keeps the values constrained but makes future additions such as new roles, 
 
 This makes dependency review, debugging, test failures, and future maintenance clearer while still producing the same final schema.
 
-## Decision 3 — Database reversal hardening
+## Decision 3 — Database reversal hardening — APPROVED
 
-**Recommendation:** add a PostgreSQL constraint trigger that enforces reversal amount = exact negative of the target transaction, while the central financial service remains responsible for normal reversal processing.
+**Approved behavior:** add a PostgreSQL constraint trigger that enforces reversal amount = exact negative of the target transaction, while the central financial service remains responsible for normal reversal processing.
 
 This gives the most sensitive ledger invariant a database-level backstop without moving the whole financial engine into triggers.
 
 ---
 
-After these migration decisions are approved, the next phase may generate the actual Alembic revision files on a separate implementation branch and run them against a disposable PostgreSQL test database before any deployment.
+All migration-planning decisions are approved. The next phase may generate the actual Alembic revision files on a separate implementation branch and run them against a disposable PostgreSQL test database before any deployment.
