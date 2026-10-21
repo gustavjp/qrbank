@@ -1,6 +1,6 @@
 # QRBank Architecture Proposal
 
-**Status:** Architecture Review Draft  
+**Status:** Architecture Approved for Schema Design  
 **Source of truth:** `SPEC.md`  
 **Scope:** Architecture only — no migrations, no production code
 
@@ -438,13 +438,20 @@ The backend should expose a common scan-resolution endpoint:
 
 It resolves an opaque token to a type and permitted action.
 
-For a student token:
-- returns/selects enrollment
+For a STUDENT command:
+- resolve the StudentID only within the active classroom
+- return/select the corresponding active enrollment
 
-For a Quick Action token:
-- requires selected enrollment in the request/session context
-- resolves configured action
-- invokes financial service
+For a QUICK command:
+- require selected enrollment
+- resolve QuickActionID within the active classroom
+- resolve its configured Action
+- invoke the financial service
+
+For an ACTION command:
+- require selected enrollment
+- resolve ActionID directly within the active classroom
+- invoke the same financial service
 
 The exact endpoint shape can be adjusted later.
 
@@ -461,47 +468,43 @@ Instead:
 
 ---
 
-# 10. QR Token and Generation Architecture
+# 10. QR Command Protocol and Generation Architecture
 
-## Token strategy
+## Command protocol
 
-Use random high-entropy opaque tokens.
+V1 should use generic, human-readable, classroom-contextual QR commands:
 
-Recommended properties:
+    STUDENT:<StudentID>
+    QUICK:<QuickActionID>
+    ACTION:<ActionID>
 
-- at least 128 bits of entropy
-- URL/QR-safe encoding
-- no PII
-- not derived from database IDs
+Examples:
 
-Store either:
+    STUDENT:01
+    QUICK:QA1
+    ACTION:A01
 
-- raw token in database with strict access controls, or preferably
-- token hash plus a short non-secret lookup prefix if efficient lookup is needed
+These QR commands are operational identifiers, not secrets or authentication credentials.
 
-Because QR scanning requires exact lookup, the database design should evaluate hashed-token lookup carefully.
+The teacher must have an active classroom selected before scanning. The server resolves all IDs within that authenticated classroom context.
 
-Recommended practical design:
+Behavior:
 
-- store a keyed hash/HMAC of the presented token
-- index the digest
-- never expose stored digest to clients
+- STUDENT selects the matching active enrollment in the current classroom.
+- QUICK resolves the current classroom's Quick Action mapping and then invokes the assigned Action.
+- ACTION directly resolves and invokes the matching active Action.
+- QUICK and ACTION require a selected student before any financial operation can occur.
+- inactive or unknown IDs are rejected.
 
-## Rotation
+The physical student card should prominently print a human-readable classroom identifier separately from the encoded command. Scan Mode must prominently show the currently active classroom so an accidental wrong-classroom scan is easier to detect.
 
-A QR identity record should support:
+The accepted tradeoff is that the server cannot infer the printed classroom label from a generic STUDENT:01 QR. The primary mitigation is an explicit, visually prominent, stable classroom context in Scan Mode rather than embedding classroom identity into the QR.
 
-- active
-- revoked
-- created_at
-- revoked_at
-- version/generation
+Quick Action sheets can therefore be generic and reusable across classrooms, while each classroom independently maps QA identifiers to Actions.
 
-Regeneration:
+Direct ACTION QR codes allow teachers to print any configured Action even when it is not on the default Quick Action sheet.
 
-1. create new token
-2. revoke prior active token(s)
-3. write administrative audit event
+No secret QR-token storage or rotation subsystem is required for V1. If an entity's classroom-facing identifier changes, its generated QR command changes. Old printed codes for inactive or renamed entities must simply stop resolving for new activity.
 
 ## QR generation
 
@@ -679,7 +682,8 @@ Primary risks:
 - SQL injection
 - brute-force login
 - reset-token abuse
-- QR-token guessing
+- forged or malformed QR commands
+- wrong-classroom scanning caused by generic classroom-contextual IDs
 - insecure reward-image upload
 - secrets in source control
 - unsafe backups
@@ -694,7 +698,8 @@ Mitigations:
 - output escaping
 - login rate limiting
 - hashed verification/reset tokens
-- high-entropy QR tokens
+- strict QR command parsing and active-classroom authorization
+- prominent classroom context in Scan Mode
 - size/type validation for uploads
 - store uploaded images outside executable/static source directories
 - environment-managed secrets
@@ -916,21 +921,21 @@ SSR + progressive JavaScript initially.
 
 ---
 
-# 20. DECISIONS REQUIRING APPROVAL
+# 20. APPROVED ARCHITECTURE DECISIONS
 
-The following should be approved before detailed database schema design:
+The following architecture decisions have been approved and should guide detailed schema design:
 
-1. **Frontend approach:** server-rendered Jinja2 + progressive JavaScript rather than a React/Vue SPA for V1.
+1. **Frontend:** server-rendered Jinja2 + progressive JavaScript for V1 rather than a large React/Vue SPA.
 2. **Authentication:** server-side sessions with secure cookies rather than browser-stored JWT authentication.
-3. **Balance ownership:** classroom balance belongs to the student's classroom enrollment, not the global student record.
-4. **User/classroom relationship:** use a membership model from day one, even if V1 exposes only one classroom owner.
-5. **QR payloads:** use opaque high-entropy tokens rather than `STUDENT:01` and `QUICK:QA1` in the new production system.
-6. **QR storage:** generate QR PNG/SVG/PDF on demand rather than storing image blobs in PostgreSQL.
-7. **Scheduler:** use systemd timers calling application management commands for V1 rather than embedding APScheduler inside web workers or introducing Celery.
-8. **Financial balance cache:** retain a stored current enrollment balance for performance while treating the ledger as the immutable financial audit trail.
-9. **Reward inventory:** decide whether V1 inventory is strict stock enforcement or optional informational inventory.
-10. **Reward refund semantics:** decide whether reversing a physical reward purchase automatically restores inventory, requires explicit teacher confirmation, or depends on fulfillment state.
-11. **Student identity scope:** confirm that a Student is independent from Enrollment even though most V1 teachers may only use students within one classroom/year.
-12. **PostgreSQL RLS:** recommend service-layer authorization for V1 and revisit RLS as defense-in-depth after the schema and authorization tests are stable.
+3. **Balance ownership:** classroom balance belongs to the student's Enrollment, not the global Student.
+4. **Classroom access:** use a ClassroomMembership model from day one, even if V1 exposes only an Owner role.
+5. **QR protocol:** use generic, human-readable, classroom-contextual commands: `STUDENT:<StudentID>`, `QUICK:<QuickActionID>`, and `ACTION:<ActionID>`. Physical student cards display classroom identity separately, and Scan Mode prominently locks/displays the active classroom.
+6. **QR files:** generate PNG/SVG/PDF on demand instead of storing QR image blobs in PostgreSQL.
+7. **Scheduler:** use systemd timers calling QRBank management commands for V1.
+8. **Balance cache:** retain stored current Enrollment balance for fast reads while the immutable ledger remains the audit trail; only the central financial service may modify the stored balance.
+9. **Reward inventory:** inventory tracking is optional per reward; when enabled, stock is strictly enforced and cannot go below zero.
+10. **Reward refunds:** financial reversal always uses the standard reversal engine. Inventory restoration is a separate explicit decision with a sensible default based on fulfillment state (normally restore when unused, normally do not restore when already fulfilled/redeemed).
+11. **Student identity:** Student and Enrollment remain separate concepts.
+12. **Tenant authorization:** use strict service-layer membership authorization for V1; revisit PostgreSQL RLS later as defense-in-depth.
 
-No production code or migrations should begin until these architectural choices are reviewed.
+These decisions are approved. Detailed PostgreSQL schema design may now begin, but production migrations and application code should still wait until the schema proposal is reviewed.
