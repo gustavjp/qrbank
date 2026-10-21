@@ -743,6 +743,8 @@ Inactive or disabled entities must no longer be accepted for new scan operations
 
 A classroom should have configurable settings including classroom name, school year, starting balance, weekly allowance amount/enabled/schedule, job wages enabled, sound enabled, duplicate-scan interval, negative-balance policy, student-selection timeout, transaction confirmations, balance-reset confirmation, and timezone.
 
+The default starting balance for a new classroom is 0. A teacher may change the classroom's starting-balance setting. When a new Enrollment is created, the configured classroom starting balance applies to that Enrollment. A nonzero starting balance must be recorded through the financial ledger rather than silently written as an unaudited balance.
+
 Configuration should not be scattered throughout source code.
 
 ---
