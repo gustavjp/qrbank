@@ -502,6 +502,7 @@ Important columns:
 
 Constraints:
 
+- UNIQUE(id, classroom_id), supporting composite tenant FKs
 - composite FK (enrollment_id, classroom_id)
 - composite FK (job_id, classroom_id)
 - partial UNIQUE(enrollment_id, job_id) WHERE ended_on IS NULL
@@ -632,6 +633,10 @@ Important columns:
 - rejected_count integer
 - error_summary text nullable
 
+Constraints:
+
+- UNIQUE(id, classroom_id), supporting composite tenant FKs
+
 Multiple attempts for the same classroom and period are allowed. This table is not the duplicate-payment guard.
 
 ## 5.19 scheduled_payments
@@ -716,6 +721,7 @@ Important columns:
 
 Constraints:
 
+- UNIQUE(id, classroom_id), supporting composite tenant FKs
 - classroom-safe composite FKs
 - purchase transaction belongs to the same classroom/enrollment
 
@@ -913,6 +919,8 @@ Every classroom request should start from:
       -> requested Classroom
 
 V1 may expose only owner, but the data model already supports teacher, assistant, and school_admin.
+
+One user has at most one active membership per classroom. The `owner` role includes normal teacher permissions, so an owner does not need a duplicate `teacher` membership row.
 
 Role semantics belong in service authorization policies, not scattered route conditionals.
 
