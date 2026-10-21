@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import re
 import uuid
+from pathlib import Path
 
 import pytest
 from alembic.config import Config
@@ -402,3 +404,11 @@ def test_alembic_revision_ids_fit_version_table() -> None:
     script = ScriptDirectory.from_config(Config("alembic.ini"))
     for revision in script.walk_revisions():
         assert len(revision.revision) <= 32, revision.revision
+
+
+def test_named_migration_identifiers_fit_postgresql_limit() -> None:
+    prefixes = ("fk_", "uq_", "ux_", "ix_", "ck_", "pk_")
+    for path in Path("migrations/versions").glob("*.py"):
+        for identifier in re.findall(r'"([A-Za-z0-9_]+)"', path.read_text()):
+            if identifier.startswith(prefixes):
+                assert len(identifier) <= 63, f"{path}: {identifier}"
