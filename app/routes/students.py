@@ -17,10 +17,15 @@ from app.services.classrooms import (
 )
 from app.services.financial import (
     FinancialIdempotencyConflictError,
+    FinancialCorrectionNotFoundError,
+    FinancialCorrectionValidationError,
+    REVERSIBLE_TRANSACTION_TYPES,
     ManualEnrollmentNotFoundError,
     ManualTransactionValidationError,
     NegativeBalanceNotAllowedError,
     post_manual_transaction,
+    post_balance_adjustment,
+    post_transaction_reversal,
 )
 from app.services.students import (
     STUDENT_MANAGER_ROLES,
@@ -211,6 +216,8 @@ def student_detail(
     request: Request,
     saved: int = 0,
     posted: int = 0,
+    adjusted: int = 0,
+    reversed: int = 0,
     replayed: int = 0,
     db: Session = Depends(get_db),
 ):
@@ -221,15 +228,17 @@ def student_detail(
     return _detail_response(
         request, db=db, user_id=user.id,
         classroom_id=classroom_id, enrollment_id=enrollment_id,
-        saved=bool(saved), posted=bool(posted), replayed=bool(replayed),
+        saved=bool(saved), posted=bool(posted),
+        adjusted=bool(adjusted), reversed=bool(reversed), replayed=bool(replayed),
     )
 
 
 def _detail_response(
     request: Request, *, db: Session, user_id: uuid.UUID,
     classroom_id: uuid.UUID, enrollment_id: uuid.UUID,
-    saved: bool = False, posted: bool = False, replayed: bool = False,
-    manual_error: str | None = None, status_code: int = 200,
+    saved: bool = False, posted: bool = False, adjusted: bool = False,
+    reversed: bool = False, replayed: bool = False,
+    financial_error: str | None = None, status_code: int = 200,
 ):
     try:
         record = get_enrollment(
@@ -253,9 +262,18 @@ def _detail_response(
             "enrollment": record.enrollment,
             "transactions": transactions,
             "can_manage": record.access.membership.role in STUDENT_MANAGER_ROLES,
-            "saved": saved, "posted": posted, "replayed": replayed,
-            "manual_error": manual_error,
+            "saved": saved, "posted": posted,
+            "adjusted": adjusted, "reversed": reversed,
+            "replayed": replayed, "financial_error": financial_error,
             "manual_request_id": uuid.uuid4(),
+            "adjustment_request_id": uuid.uuid4(),
+            "reversal_request_ids": {tx.id: uuid.uuid4() for tx in transactions},
+            "reversed_by": {
+                tx.reverses_transaction_id: tx for tx in transactions
+                if tx.reverses_transaction_id is not None
+            },
+            "transaction_numbers": {tx.id: tx.display_number for tx in transactions},
+            "reversible_types": REVERSIBLE_TRANSACTION_TYPES,
         },
         status_code=status_code,
     )
@@ -432,7 +450,7 @@ def add_manual_transaction(
         db.rollback()
         return _detail_response(
             request, db=db, user_id=user.id, classroom_id=classroom_id,
-            enrollment_id=enrollment_id, manual_error=str(exc), status_code=400,
+            enrollment_id=enrollment_id, financial_error=str(exc), status_code=400,
         )
     except Exception:
         db.rollback()
@@ -445,11 +463,132 @@ def add_manual_transaction(
         }.get(outcome.rejection_code, "Transaction rejected; no points were changed.")
         return _detail_response(
             request, db=db, user_id=user.id, classroom_id=classroom_id,
-            enrollment_id=enrollment_id, manual_error=message, status_code=422,
+            enrollment_id=enrollment_id, financial_error=message, status_code=422,
         )
 
     return RedirectResponse(
         f"/classrooms/{classroom_id}/students/{enrollment_id}"
         + ("?replayed=1" if outcome.replayed else "?posted=1"),
+        status_code=status.HTTP_303_SEE_OTHER,
+    )
+
+
+@router.post("/{enrollment_id}/balance-adjustment")
+def set_student_balance(
+    classroom_id: uuid.UUID,
+    enrollment_id: uuid.UUID,
+    request: Request,
+    request_id: uuid.UUID = Form(...),
+    target_balance: str = Form(...),
+    note: str = Form(...),
+    csrf_token: str = Form(...),
+    db: Session = Depends(get_db),
+):
+    validate_csrf(request, csrf_token)
+    user = current_user_from_request(request, db)
+    if user is None:
+        return RedirectResponse("/auth/login", status_code=status.HTTP_303_SEE_OTHER)
+
+    raw_target = target_balance.strip()
+    target = int(raw_target) if re.fullmatch(r"-?[0-9]{1,10}", raw_target) else None
+    try:
+        outcome = post_balance_adjustment(
+            db, actor_user_id=user.id, classroom_id=classroom_id,
+            enrollment_id=enrollment_id, target_balance=target,
+            note=note, request_id=request_id,
+        )
+        db.commit()
+    except (ClassroomNotFoundError, StudentNotFoundError, FinancialCorrectionNotFoundError):
+        db.rollback()
+        raise _not_found()
+    except ClassroomPermissionError:
+        db.rollback()
+        raise HTTPException(status_code=403, detail="owner or teacher permission is required")
+    except FinancialIdempotencyConflictError:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="request ID was reused with different inputs")
+    except FinancialCorrectionValidationError as exc:
+        db.rollback()
+        return _detail_response(
+            request, db=db, user_id=user.id, classroom_id=classroom_id,
+            enrollment_id=enrollment_id, financial_error=str(exc), status_code=400,
+        )
+    except Exception:
+        db.rollback()
+        raise
+
+    if outcome.rejection_code:
+        message = {
+            "already_at_target": "Balance is already at that amount; no ledger entry was created.",
+            "negative_balance_disabled": "Negative balances are disabled; no points were changed.",
+            "amount_out_of_range": "The required adjustment exceeds the integer transaction range.",
+        }.get(outcome.rejection_code, "Adjustment rejected; no points were changed.")
+        return _detail_response(
+            request, db=db, user_id=user.id, classroom_id=classroom_id,
+            enrollment_id=enrollment_id, financial_error=message, status_code=422,
+        )
+    return RedirectResponse(
+        f"/classrooms/{classroom_id}/students/{enrollment_id}"
+        + ("?replayed=1" if outcome.replayed else "?adjusted=1"),
+        status_code=status.HTTP_303_SEE_OTHER,
+    )
+
+
+@router.post("/{enrollment_id}/transactions/{target_transaction_id}/reverse")
+def reverse_student_transaction(
+    classroom_id: uuid.UUID,
+    enrollment_id: uuid.UUID,
+    target_transaction_id: uuid.UUID,
+    request: Request,
+    request_id: uuid.UUID = Form(...),
+    note: str = Form(...),
+    csrf_token: str = Form(...),
+    db: Session = Depends(get_db),
+):
+    validate_csrf(request, csrf_token)
+    user = current_user_from_request(request, db)
+    if user is None:
+        return RedirectResponse("/auth/login", status_code=status.HTTP_303_SEE_OTHER)
+    try:
+        outcome = post_transaction_reversal(
+            db, actor_user_id=user.id, classroom_id=classroom_id,
+            enrollment_id=enrollment_id, target_transaction_id=target_transaction_id,
+            note=note, request_id=request_id,
+        )
+        db.commit()
+    except (ClassroomNotFoundError, StudentNotFoundError, FinancialCorrectionNotFoundError):
+        db.rollback()
+        raise _not_found()
+    except ClassroomPermissionError:
+        db.rollback()
+        raise HTTPException(status_code=403, detail="owner or teacher permission is required")
+    except FinancialIdempotencyConflictError:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="request ID was reused with different inputs")
+    except FinancialCorrectionValidationError as exc:
+        db.rollback()
+        return _detail_response(
+            request, db=db, user_id=user.id, classroom_id=classroom_id,
+            enrollment_id=enrollment_id, financial_error=str(exc), status_code=400,
+        )
+    except Exception:
+        db.rollback()
+        raise
+
+    if outcome.rejection_code:
+        message = {
+            "already_reversed": "This transaction has already been directly reversed.",
+            "unsupported_transaction_type": "This transaction needs a domain-specific refund or correction workflow.",
+            "amount_out_of_range": "The reversal amount exceeds the supported integer range.",
+            "insufficient_balance": "Insufficient balance to reverse this transaction.",
+            "balance_out_of_range": "The resulting balance exceeds the supported integer range.",
+        }.get(outcome.rejection_code, "Reversal rejected; no points were changed.")
+        return _detail_response(
+            request, db=db, user_id=user.id, classroom_id=classroom_id,
+            enrollment_id=enrollment_id, financial_error=message, status_code=422,
+        )
+    return RedirectResponse(
+        f"/classrooms/{classroom_id}/students/{enrollment_id}"
+        + ("?replayed=1" if outcome.replayed else "?reversed=1"),
         status_code=status.HTTP_303_SEE_OTHER,
     )

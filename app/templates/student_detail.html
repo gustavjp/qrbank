@@ -6,8 +6,10 @@
 <p class="muted">Student code: {{ enrollment.student_code }} · {{ "Active" if enrollment.active else "Inactive" }}</p>
 {% if saved %}<p class="success">Student information saved.</p>{% endif %}
 {% if posted %}<p class="success">Manual transaction posted and recorded in the ledger.</p>{% endif %}
+{% if adjusted %}<p class="success">Balance adjustment posted to the ledger.</p>{% endif %}
+{% if reversed %}<p class="success">Reversal posted to the ledger; original transaction retained.</p>{% endif %}
 {% if replayed %}<p class="success">This request was already processed; no duplicate transaction was posted.</p>{% endif %}
-{% if manual_error %}<p class="error" role="alert">{{ manual_error }}</p>{% endif %}
+{% if financial_error %}<p class="error" role="alert">{{ financial_error }}</p>{% endif %}
 
 <div style="border:1px solid #dfe5ec; border-radius:10px; padding:1rem; margin:1rem 0;">
   <div class="muted">Current balance</div>
@@ -73,6 +75,22 @@
 <p class="muted">Posting changes the balance immediately and creates a permanent ledger entry. Use a new request for each intended transaction.</p>
 {% endif %}
 
+{% if can_manage and enrollment.active %}
+<h2>Set balance</h2>
+<form method="post" action="/classrooms/{{ classroom.id }}/students/{{ enrollment.id }}/balance-adjustment">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+  <input type="hidden" name="request_id" value="{{ adjustment_request_id }}">
+  <label>Target balance (whole number)
+    <input type="number" name="target_balance" min="-2147483648" max="2147483647" step="1" required>
+  </label>
+  <label>Reason / note
+    <input type="text" name="note" maxlength="500" required>
+  </label>
+  <button class="primary" type="submit">Set balance through ledger</button>
+</form>
+<p class="muted">The server calculates the difference from the current balance. No entry is created when the balance already matches.</p>
+{% endif %}
+
 <h2>Transaction history</h2>
 {% if transactions %}
   <div style="display:grid; gap:.6rem;">
@@ -84,6 +102,23 @@
         <div class="muted">Balance {{ tx.balance_before }} → {{ tx.balance_after }}</div>
         {% if tx.manual_category %}<div>Category: {{ tx.manual_category | replace("_", " ") | title }}</div>{% endif %}
         {% if tx.note %}<div>Note: {{ tx.note }}</div>{% endif %}
+        {% if tx.adjustment_target_balance is not none %}<div>Set to: {{ tx.adjustment_target_balance }}</div>{% endif %}
+        {% if tx.reverses_transaction_id %}
+          <div>Reverses TX{{ "%06d"|format(transaction_numbers[tx.reverses_transaction_id]) }}</div>
+        {% endif %}
+        {% set undo = reversed_by.get(tx.id) %}
+        {% if undo %}
+          <div class="muted">Reversed by TX{{ "%06d"|format(undo.display_number) }}</div>
+        {% elif can_manage and tx.transaction_type in reversible_types %}
+          <form method="post" action="/classrooms/{{ classroom.id }}/students/{{ enrollment.id }}/transactions/{{ tx.id }}/reverse">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <input type="hidden" name="request_id" value="{{ reversal_request_ids[tx.id] }}">
+            <label>Reversal reason / note
+              <input type="text" name="note" maxlength="500" required placeholder="Why is this transaction being reversed?">
+            </label>
+            <button class="secondary" type="submit">Reverse TX{{ "%06d"|format(tx.display_number) }}</button>
+          </form>
+        {% endif %}
         <div class="muted">{{ tx.occurred_at.strftime("%Y-%m-%d %H:%M UTC") }} · Source: {{ tx.source }}</div>
       </div>
     {% endfor %}

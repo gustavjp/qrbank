@@ -34,12 +34,14 @@ The current application includes:
 - classroom-scoped student codes with active/inactive status
 - atomic manual credit/deduction flow with required reason, category, idempotency, and behavior-event linkage
 - per-student ledger history with category, note, source, and balances
+- audited set-balance adjustments (server-computed difference) and append-only transaction reversals
+- exact inverse reversals, reversal-of-reversal support, and duplicate undo protection
 - central opening-balance, QR Action, and manual financial posting services with PostgreSQL row locking and idempotency
 - append-oriented balance-changing ledger history with stored balance cache updates in the same transaction
 - health and readiness endpoints
 - PostgreSQL-backed automated tests
 
-Manual set-balance adjustments, reversals, mobile camera integration, rewards UI, scheduled payments, password reset, and a production email provider are not implemented yet. Scan Mode can post QR Action/Quick Action transactions to the ledger.
+Mobile camera integration, rewards UI, scheduled payments, password reset, and a production email provider are not implemented yet. Scan Mode can post QR Action/Quick Action transactions to the ledger.
 
 ## Local setup
 

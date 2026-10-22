@@ -557,3 +557,241 @@ def post_manual_transaction(
     }
     db.flush()
     return _manual_posting_result(db, request, replayed=False)
+
+
+class FinancialCorrectionValidationError(ValueError):
+    pass
+
+
+class FinancialCorrectionNotFoundError(LookupError):
+    pass
+
+
+# Rewards, wages, allowances and batches require coordinated domain-specific undo.
+REVERSIBLE_TRANSACTION_TYPES = frozenset({
+    "opening_balance", "action", "manual", "adjustment", "reversal",
+})
+
+
+@dataclass(frozen=True)
+class CorrectionPostingResult:
+    transaction: FinancialTransaction | None
+    replayed: bool
+    rejection_code: str | None
+    balance_after: int
+
+
+def _correction_note(note: str) -> str:
+    if not isinstance(note, str) or not 1 <= len(note.strip()) <= 500:
+        raise FinancialCorrectionValidationError("enter a reason of 1–500 characters")
+    return note.strip()
+
+
+def _correction_result(
+    db: Session, request: FinancialRequest, *, kind: str, replayed: bool,
+) -> CorrectionPostingResult:
+    response = request.response_json
+    if response is None:
+        raise FinancialIntegrityError("correction request has no persisted result")
+    transaction_id = response.get("transaction_id")
+    transaction = (
+        _existing_transaction_for_request(db, request_id=request.id)
+        if transaction_id else None
+    )
+    if transaction is not None and (
+        str(transaction.id) != transaction_id
+        or transaction.classroom_id != request.classroom_id
+        or transaction.transaction_type != kind
+    ):
+        raise FinancialIntegrityError("correction ledger result is mismatched")
+    if (request.status == "completed") != (transaction is not None):
+        raise FinancialIntegrityError("correction request/ledger state is inconsistent")
+    return CorrectionPostingResult(
+        transaction=transaction, replayed=replayed,
+        rejection_code=request.rejection_code,
+        balance_after=response["balance_after"],
+    )
+
+
+def _require_correction_permission(
+    db: Session, *, actor_user_id: uuid.UUID, classroom_id: uuid.UUID,
+) -> None:
+    access = require_classroom_access(
+        db, user_id=actor_user_id, classroom_id=classroom_id,
+    )
+    if access.membership.role not in {"owner", "teacher"}:
+        raise ClassroomPermissionError("owner or teacher permission is required")
+
+
+def post_balance_adjustment(
+    db: Session,
+    *,
+    actor_user_id: uuid.UUID,
+    classroom_id: uuid.UUID,
+    enrollment_id: uuid.UUID,
+    target_balance: int,
+    note: str,
+    request_id: uuid.UUID,
+) -> CorrectionPostingResult:
+    """Set an active enrollment to a target by posting the locked difference."""
+    if type(target_balance) is not int or not -(2**31) <= target_balance <= 2**31 - 1:
+        raise FinancialCorrectionValidationError("target must be a supported whole-number balance")
+    note = _correction_note(note)
+    _require_correction_permission(
+        db, actor_user_id=actor_user_id, classroom_id=classroom_id,
+    )
+    request, replayed = _claim_request(
+        db, classroom_id=classroom_id, actor_user_id=actor_user_id,
+        idempotency_key=str(request_id), request_kind="balance_adjustment",
+        request_fingerprint=_fingerprint([
+            "balance_adjustment", str(classroom_id), str(actor_user_id),
+            str(enrollment_id), str(target_balance), note,
+        ]),
+    )
+    if replayed:
+        if request.request_kind != "balance_adjustment" or request.actor_user_id != actor_user_id:
+            raise FinancialIdempotencyConflictError("request ID belongs to another operation")
+        return _correction_result(db, request, kind="adjustment", replayed=True)
+
+    enrollment = db.scalar(
+        select(Enrollment).where(
+            Enrollment.id == enrollment_id,
+            Enrollment.classroom_id == classroom_id,
+            Enrollment.active.is_(True),
+        ).with_for_update().execution_options(populate_existing=True)
+    )
+    if enrollment is None:
+        raise FinancialCorrectionNotFoundError("active enrollment not found")
+    settings = db.get(ClassroomSettings, classroom_id)
+    if settings is None:
+        raise FinancialIntegrityError("classroom settings not found")
+
+    before = enrollment.current_balance
+    amount = target_balance - before
+
+    def reject(code: str) -> CorrectionPostingResult:
+        request.status = "rejected"
+        request.rejection_code = code
+        request.response_json = {"transaction_id": None, "balance_after": before}
+        db.flush()
+        return _correction_result(db, request, kind="adjustment", replayed=False)
+
+    if amount == 0:
+        return reject("already_at_target")
+    if target_balance < 0 and not settings.allow_negative_balance:
+        return reject("negative_balance_disabled")
+    if not -(2**31 - 1) <= amount <= 2**31 - 1:
+        return reject("amount_out_of_range")
+
+    transaction = FinancialTransaction(
+        id=uuid.uuid4(), classroom_id=classroom_id,
+        enrollment_id=enrollment_id, financial_request_id=request.id,
+        transaction_type="adjustment", source="manual",
+        amount=amount, balance_before=before, balance_after=target_balance,
+        actor_user_id=actor_user_id, note=note,
+        adjustment_target_balance=target_balance,
+        student_code_snapshot=enrollment.student_code,
+    )
+    db.add(transaction)
+    enrollment.current_balance = target_balance
+    db.flush()
+    request.response_json = {
+        "transaction_id": str(transaction.id), "balance_after": target_balance,
+    }
+    db.flush()
+    return _correction_result(db, request, kind="adjustment", replayed=False)
+
+
+def post_transaction_reversal(
+    db: Session,
+    *,
+    actor_user_id: uuid.UUID,
+    classroom_id: uuid.UUID,
+    enrollment_id: uuid.UUID,
+    target_transaction_id: uuid.UUID,
+    note: str,
+    request_id: uuid.UUID,
+) -> CorrectionPostingResult:
+    """Append an exact opposite ledger entry; never edit the target transaction."""
+    note = _correction_note(note)
+    _require_correction_permission(
+        db, actor_user_id=actor_user_id, classroom_id=classroom_id,
+    )
+    request, replayed = _claim_request(
+        db, classroom_id=classroom_id, actor_user_id=actor_user_id,
+        idempotency_key=str(request_id), request_kind="reversal",
+        request_fingerprint=_fingerprint([
+            "reversal", str(classroom_id), str(actor_user_id),
+            str(enrollment_id), str(target_transaction_id), note,
+        ]),
+    )
+    if replayed:
+        if request.request_kind != "reversal" or request.actor_user_id != actor_user_id:
+            raise FinancialIdempotencyConflictError("request ID belongs to another operation")
+        return _correction_result(db, request, kind="reversal", replayed=True)
+
+    # Also permit authorized historical corrections for inactive enrollments.
+    enrollment = db.scalar(
+        select(Enrollment).where(
+            Enrollment.id == enrollment_id,
+            Enrollment.classroom_id == classroom_id,
+        ).with_for_update().execution_options(populate_existing=True)
+    )
+    if enrollment is None:
+        raise FinancialCorrectionNotFoundError("enrollment not found")
+
+    target = db.scalar(select(FinancialTransaction).where(
+        FinancialTransaction.id == target_transaction_id,
+        FinancialTransaction.classroom_id == classroom_id,
+        FinancialTransaction.enrollment_id == enrollment_id,
+    ))
+    if target is None:
+        raise FinancialCorrectionNotFoundError("transaction not found for this enrollment")
+    settings = db.get(ClassroomSettings, classroom_id)
+    if settings is None:
+        raise FinancialIntegrityError("classroom settings not found")
+
+    before = enrollment.current_balance
+    amount = -target.amount
+    after = before + amount
+
+    def reject(code: str) -> CorrectionPostingResult:
+        request.status = "rejected"
+        request.rejection_code = code
+        request.response_json = {"transaction_id": None, "balance_after": before}
+        db.flush()
+        return _correction_result(db, request, kind="reversal", replayed=False)
+
+    if target.transaction_type not in REVERSIBLE_TRANSACTION_TYPES:
+        return reject("unsupported_transaction_type")
+    reversed_already = db.scalar(select(FinancialTransaction.id).where(
+        FinancialTransaction.classroom_id == classroom_id,
+        FinancialTransaction.enrollment_id == enrollment_id,
+        FinancialTransaction.reverses_transaction_id == target.id,
+    ).limit(1))
+    if reversed_already is not None:
+        return reject("already_reversed")
+    if not -(2**31 - 1) <= amount <= 2**31 - 1:
+        return reject("amount_out_of_range")
+    if after < 0 and not settings.allow_negative_balance:
+        return reject("insufficient_balance")
+    if not -(2**31) <= after <= 2**31 - 1:
+        return reject("balance_out_of_range")
+
+    transaction = FinancialTransaction(
+        id=uuid.uuid4(), classroom_id=classroom_id,
+        enrollment_id=enrollment_id, financial_request_id=request.id,
+        transaction_type="reversal", source="manual",
+        amount=amount, balance_before=before, balance_after=after,
+        actor_user_id=actor_user_id, note=note,
+        reverses_transaction_id=target.id,
+        student_code_snapshot=enrollment.student_code,
+    )
+    db.add(transaction)
+    enrollment.current_balance = after
+    db.flush()
+    request.response_json = {
+        "transaction_id": str(transaction.id), "balance_after": after,
+    }
+    db.flush()
+    return _correction_result(db, request, kind="reversal", replayed=False)
