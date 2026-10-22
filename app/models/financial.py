@@ -64,3 +64,4 @@ class FinancialTransaction(Base):
     action_name_snapshot: Mapped[str | None] = mapped_column(Text, nullable=True)
     action_kind_snapshot: Mapped[str | None] = mapped_column(Text, nullable=True)
     quick_action_code_snapshot: Mapped[str | None] = mapped_column(Text, nullable=True)
+    adjustment_target_balance: Mapped[int | None] = mapped_column(Integer, nullable=True)
