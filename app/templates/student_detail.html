@@ -8,6 +8,7 @@
 {% if posted %}<p class="success">Manual transaction posted and recorded in the ledger.</p>{% endif %}
 {% if adjusted %}<p class="success">Balance adjustment posted to the ledger.</p>{% endif %}
 {% if reversed %}<p class="success">Reversal posted to the ledger; original transaction retained.</p>{% endif %}
+{% if purchased %}<p class="success">Reward purchased; points deducted and recorded in the ledger.</p>{% endif %}
 {% if replayed %}<p class="success">This request was already processed; no duplicate transaction was posted.</p>{% endif %}
 {% if financial_error %}<p class="error" role="alert">{{ financial_error }}</p>{% endif %}
 
@@ -17,6 +18,43 @@
   <div class="muted">Current balance</div>
   <div style="font-size:2rem; font-weight:700;">{{ enrollment.current_balance }}</div>
 </div>
+
+{% if can_manage and enrollment.active %}
+<h2>Purchase reward</h2>
+{% if available_rewards %}
+  <p class="muted">Review the price before purchasing. The server checks the current price, balance, and stock before deducting points.</p>
+  {% for reward in available_rewards %}
+    <div style="border-bottom:1px solid #dfe5ec; padding:.6rem 0;">
+      <strong>{{ reward.reward_code }} — {{ reward.name }}</strong>
+      <div>{{ reward.price_points }} points · {{ reward.reward_type|title }}</div>
+      {% if reward.inventory_tracking and reward.quantity_available < 1 %}
+        <p class="muted">Out of stock</p>
+      {% else %}
+        <form method="post" action="/classrooms/{{ classroom.id }}/students/{{ enrollment.id }}/rewards/purchase">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <input type="hidden" name="request_id" value="{{ purchase_request_ids[reward.id] }}">
+          <input type="hidden" name="reward_id" value="{{ reward.id }}">
+          <input type="hidden" name="expected_price" value="{{ reward.price_points }}">
+          <button class="secondary" type="submit">Purchase for {{ reward.price_points }} points</button>
+        </form>
+      {% endif %}
+    </div>
+  {% endfor %}
+{% else %}
+  <p class="muted">No active classroom rewards yet.</p>
+{% endif %}
+{% endif %}
+
+<h2>Reward purchase history</h2>
+{% if reward_purchases %}
+  <ul>
+    {% for purchase in reward_purchases %}
+      <li>{{ purchase.reward_code_snapshot }} — {{ purchase.reward_name_snapshot }} · {{ purchase.price_snapshot }} points · {{ purchase.fulfillment_status|title }}</li>
+    {% endfor %}
+  </ul>
+{% else %}
+  <p class="muted">No reward purchases yet.</p>
+{% endif %}
 
 {% if can_manage %}
 <h2>Edit student</h2>
@@ -103,6 +141,7 @@
         · {% if tx.amount > 0 %}+{% endif %}{{ tx.amount }}
         <div class="muted">Balance {{ tx.balance_before }} → {{ tx.balance_after }}</div>
         {% if tx.manual_category %}<div>Category: {{ tx.manual_category | replace("_", " ") | title }}</div>{% endif %}
+        {% if tx.reward_code_snapshot %}<div>Reward: {{ tx.reward_code_snapshot }} — {{ tx.reward_name_snapshot }} ({{ tx.reward_price_snapshot }} points)</div>{% endif %}
         {% if tx.note %}<div>Note: {{ tx.note }}</div>{% endif %}
         {% if tx.adjustment_target_balance is not none %}<div>Set to: {{ tx.adjustment_target_balance }}</div>{% endif %}
         {% if tx.reverses_transaction_id %}

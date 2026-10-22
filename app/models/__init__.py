@@ -8,6 +8,7 @@ from app.models.classroom import Classroom, ClassroomMembership, ClassroomSettin
 from app.models.financial import FinancialRequest, FinancialTransaction
 from app.models.job import Job, JobAssignment
 from app.models.reward import Reward
+from app.models.reward_purchase import RewardFulfillmentEvent, RewardInventoryEvent, RewardPurchase
 from app.models.student import Enrollment, Student
 
 __all__ = [
@@ -28,6 +29,9 @@ __all__ = [
     "JobAssignment",
     "QuickAction",
     "Reward",
+    "RewardFulfillmentEvent",
+    "RewardInventoryEvent",
+    "RewardPurchase",
     "ScheduledPayment",
     "Student",
     "User",
