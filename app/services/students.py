@@ -131,6 +131,9 @@ def create_student_enrollment(
         display_name=_clean_optional(display_name),
         created_by_user_id=user_id,
     )
+    db.add(student)
+    db.flush()
+
     enrollment = Enrollment(
         id=uuid.uuid4(),
         classroom_id=classroom_id,
@@ -141,7 +144,7 @@ def create_student_enrollment(
         started_on=date.today(),
         active=True,
     )
-    db.add_all([student, enrollment])
+    db.add(enrollment)
     db.flush()
 
     opening = None
