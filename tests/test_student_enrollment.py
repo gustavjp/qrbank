@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import uuid
+from concurrent.futures import ThreadPoolExecutor
+from threading import Barrier
 
 from fastapi.testclient import TestClient
 from sqlalchemy import func, select
@@ -222,6 +224,73 @@ def test_opening_balance_retry_replays_without_double_credit(engine) -> None:
             .where(FinancialTransaction.enrollment_id == enrollment_id)
         )
         assert tx_count == 1
+
+
+def test_concurrent_opening_balance_requests_post_only_once(engine) -> None:
+    _, owner_id = _logged_in_client(engine)
+    classroom_id = _create_classroom(engine, owner_id, starting_balance=80)
+
+    # Leave a newly created enrollment at zero before racing its opening post.
+    with Session(engine) as db, db.begin():
+        student = Student(
+            id=uuid.uuid4(),
+            created_by_user_id=owner_id,
+        )
+        db.add(student)
+        db.flush()
+        enrollment = Enrollment(
+            id=uuid.uuid4(),
+            classroom_id=classroom_id,
+            student_id=student.id,
+            student_code="RACE",
+            current_balance=0,
+            active=True,
+        )
+        db.add(enrollment)
+        db.flush()
+        enrollment_id = enrollment.id
+
+    barrier = Barrier(2)
+
+    def post_once() -> bool:
+        with Session(engine) as db, db.begin():
+            barrier.wait(timeout=10)
+            result = post_opening_balance(
+                db,
+                actor_user_id=owner_id,
+                classroom_id=classroom_id,
+                enrollment_id=enrollment_id,
+                amount=80,
+                student_code_snapshot="RACE",
+            )
+            assert result is not None
+            return result.replayed
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        futures = [executor.submit(post_once) for _ in range(2)]
+        replay_flags = [future.result(timeout=20) for future in futures]
+
+    assert sorted(replay_flags) == [False, True]
+
+    with Session(engine) as db:
+        enrollment = db.get(Enrollment, enrollment_id)
+        assert enrollment is not None
+        assert enrollment.current_balance == 80
+        transactions = list(
+            db.scalars(
+                select(FinancialTransaction).where(
+                    FinancialTransaction.enrollment_id == enrollment_id
+                )
+            )
+        )
+        assert len(transactions) == 1
+        assert transactions[0].amount == 80
+        request_count = db.scalar(
+            select(func.count())
+            .select_from(FinancialRequest)
+            .where(FinancialRequest.classroom_id == classroom_id)
+        )
+        assert request_count == 1
 
 
 def test_duplicate_student_code_rolls_back_without_orphan_student(engine) -> None:
