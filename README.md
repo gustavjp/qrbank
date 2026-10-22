@@ -44,12 +44,12 @@ The current application includes:
 - authorized classroom roster/balance CSV export with active/all selection, integer balances, enrollment status and dates, and spreadsheet formula safeguards
 - audited set-balance adjustments (server-computed difference) and append-only transaction reversals
 - exact inverse reversals, reversal-of-reversal support, and duplicate undo protection
-- central opening-balance, QR Action, and manual financial posting services with PostgreSQL row locking and idempotency
+- central opening-balance, QR Action, manual, weekly wage, and weekly allowance financial posting services with PostgreSQL row locking and idempotency
 - append-oriented balance-changing ledger history with stored balance cache updates in the same transaction
 - health and readiness endpoints
 - PostgreSQL-backed automated tests
 
-Weekly job wages have an external scheduler command, but no scheduler is provisioned or enabled automatically. Weekly allowances, mobile camera integration, rewards UI, password reset, and a production email provider are not implemented yet. Scan Mode can post QR Action/Quick Action transactions to the ledger.
+Weekly job wages and student allowances have external scheduler commands, but no scheduler is provisioned or enabled automatically. Mobile camera integration, rewards UI, password reset, and a production email provider are not implemented yet. Scan Mode can post QR Action/Quick Action transactions to the ledger.
 
 ## Local setup
 
@@ -181,6 +181,35 @@ indicates that some payments failed and should trigger an operational alert.
 
 No automatic task is installed by this code alone. Enable and monitor the
 external scheduler before relying on weekly wages in a live classroom.
+
+## Weekly student allowances
+
+When weekly allowance is enabled in classroom settings, active enrolled
+students can receive a nonnegative integer allowance at the classroom-local
+payday (default 20 points each Monday at 6:00 AM in America/New_York).
+The configuration is disabled by default. A trusted external scheduler should
+invoke:
+
+```bash
+python -m app.tasks.weekly_allowances
+```
+
+Run periodically (for example, every ten minutes) and monitor nonzero exit
+codes for partial failures. No task is automatically installed or launched
+by FastAPI. Each eligible enrollment gets at most one allowance for each
+classroom-local week, even with simultaneous runner invocations or retries.
+The central financial service locks the enrollment row and atomically writes
+its updated cached balance, idempotent FinancialRequest, ScheduledPayment,
+and append-only allowance ledger transaction. A configured zero allowance
+consumes the week without creating a zero-point financial transaction.
+
+Inactive/ended enrollments and enrollments created after the scheduled
+deadline are excluded. Editing an allowance amount after a completed payment
+does not retroactively change the earlier paid amount; the next week's
+payment uses the new amount. Errors on one student roll back that student's
+entire payment and allow other students to be paid; missing payments can
+be retried in a later invocation. The scheduler respects IANA timezones,
+daylight saving transitions, and current classroom settings.
 
 ## Weekly behavior analytics
 
