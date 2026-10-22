@@ -32,12 +32,14 @@ The current application includes:
 - QA1–QA10 default Action/Quick Action sheet for new classrooms, with safe opt-in setup for older classrooms
 - classroom-scoped read-only QR command resolution and keyboard-scanner preview mode
 - classroom-scoped student codes with active/inactive status
-- central opening-balance financial posting service with PostgreSQL row locking and idempotency
-- immutable opening-balance ledger history with stored balance cache updates in the same transaction
+- atomic manual credit/deduction flow with required reason, category, idempotency, and behavior-event linkage
+- per-student ledger history with category, note, source, and balances
+- central opening-balance, QR Action, and manual financial posting services with PostgreSQL row locking and idempotency
+- append-oriented balance-changing ledger history with stored balance cache updates in the same transaction
 - health and readiness endpoints
 - PostgreSQL-backed automated tests
 
-Balance-changing QR scan execution, manual transaction flows, mobile camera integration, rewards UI, scheduled payments, password reset, and a production email provider are intentionally not implemented yet. The current Scan Mode explicitly previews commands without financial posting.
+Manual set-balance adjustments, reversals, mobile camera integration, rewards UI, scheduled payments, password reset, and a production email provider are not implemented yet. Scan Mode can post QR Action/Quick Action transactions to the ledger.
 
 ## Local setup
 
