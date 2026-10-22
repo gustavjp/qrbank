@@ -3,8 +3,41 @@
 {% block content %}
 <h1>QRBank</h1>
 <p>Signed in as <strong>{{ user.email }}</strong>.</p>
-<p class="success">Your email is verified.</p>
-<p class="muted">Classroom management will be added in the next milestone.</p>
+
+<div style="display:flex; justify-content:space-between; align-items:center; gap:1rem; margin-top:1.5rem;">
+  <h2 style="margin:0;">Classrooms</h2>
+  <a href="/classrooms/new">Create classroom</a>
+</div>
+
+{% if classroom_access %}
+  <div style="margin-top:1rem; display:grid; gap:.75rem;">
+    {% for item in classroom_access %}
+      <div style="border:1px solid #dfe5ec; border-radius:10px; padding:1rem;">
+        <div style="display:flex; justify-content:space-between; gap:1rem; align-items:flex-start;">
+          <div>
+            <strong>{{ item.classroom.name }}</strong>
+            <div class="muted">{{ item.classroom.school_year }} · {{ item.membership.role }}</div>
+            {% if active_classroom_id == item.classroom.id|string %}
+              <div class="success" style="margin-top:.5rem;">Active classroom</div>
+            {% endif %}
+          </div>
+          <div>
+            <a href="/classrooms/{{ item.classroom.id }}">Open</a>
+          </div>
+        </div>
+        {% if active_classroom_id != item.classroom.id|string %}
+          <form method="post" action="/classrooms/{{ item.classroom.id }}/select">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <button class="secondary" type="submit">Make active</button>
+          </form>
+        {% endif %}
+      </div>
+    {% endfor %}
+  </div>
+{% else %}
+  <p class="muted">No classrooms yet. Create your first classroom to begin.</p>
+{% endif %}
+
 <form method="post" action="/auth/logout">
   <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
   <button class="secondary" type="submit">Sign out</button>
