@@ -10,6 +10,7 @@
 {% if reversed %}<p class="success">Reversal posted to the ledger; original transaction retained.</p>{% endif %}
 {% if purchased %}<p class="success">Reward purchased; points deducted and recorded in the ledger.</p>{% endif %}
 {% if refunded %}<p class="success">Reward refunded; an exact reversal was posted and available stock restored if tracked.</p>{% endif %}
+{% if fulfilled %}<p class="success">Reward fulfillment status updated and audited. No points were changed.</p>{% endif %}
 {% if replayed %}<p class="success">This request was already processed; no duplicate transaction was posted.</p>{% endif %}
 {% if financial_error %}<p class="error" role="alert">{{ financial_error }}</p>{% endif %}
 
@@ -47,11 +48,23 @@
 {% endif %}
 
 <h2>Reward purchase history</h2>
+<p><a href="/classrooms/{{ classroom.id }}/reward-purchases">View classroom reward fulfillment and audit history</a></p>
 {% if reward_purchases %}
   <ul>
     {% for purchase in reward_purchases %}
       <li>
         {{ purchase.reward_code_snapshot }} — {{ purchase.reward_name_snapshot }} · {{ purchase.price_snapshot }} points · {{ purchase.fulfillment_status|title }}
+        {% if can_manage and purchase.fulfillment_status in ("unused", "redeemed") %}
+          <form method="post" action="/classrooms/{{ classroom.id }}/students/{{ enrollment.id }}/reward-purchases/{{ purchase.id }}/fulfill">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <input type="hidden" name="expected_event_id" value="{{ reward_latest_events[purchase.id] }}">
+            <input type="hidden" name="target_status" value="{{ 'redeemed' if purchase.fulfillment_status == 'unused' else 'unused' }}">
+            <label>{{ "Redemption note (optional)" if purchase.fulfillment_status == "unused" else "Reason for reopening (required)" }}
+              <input type="text" name="note" maxlength="500" {% if purchase.fulfillment_status == "redeemed" %}required{% endif %}>
+            </label>
+            <button class="secondary" type="submit">{{ "Mark redeemed" if purchase.fulfillment_status == "unused" else "Reopen reward" }}</button>
+          </form>
+        {% endif %}
         {% if can_manage and purchase.fulfillment_status == "unused" %}
           <form method="post" action="/classrooms/{{ classroom.id }}/students/{{ enrollment.id }}/reward-purchases/{{ purchase.id }}/refund">
             <input type="hidden" name="csrf_token" value="{{ csrf_token }}">

@@ -42,6 +42,7 @@ The current application includes:
 - classroom reward purchasing from the student detail page or classroom Rewards page, through one central financial service
 - idempotent purchase requests, immutable reward/price snapshots, fulfillment history, and optional stock decrement audit events
 - coordinated reward refunds with exact linked reversal credits, cancelled purchase state, and atomic stock restoration when the original purchase consumed inventory
+- owner/teacher reward fulfillment (redeem and reasoned reopening), immutable event history, optimistic stale-form protection, and classroom-wide status filtering
 - classroom-configured positive/negative behavior reasons and audited post-scan reason/detail attachment, without financial ledger mutation
 - classroom-wide read-only ledger browsing with tenant-bound student/type/source/category/local-date filters and stable keyset pagination
 - authorized streaming CSV export of all filtered posted ledger entries, with immutable identifiers, numeric balances, local/UTC timestamps, and spreadsheet formula safeguards
@@ -53,7 +54,7 @@ The current application includes:
 - health and readiness endpoints
 - PostgreSQL-backed automated tests
 
-Weekly job wages and student allowances have external scheduler commands, but no scheduler is provisioned or enabled automatically. Inventory setup/adjustments, reward redemption, refund undo, reward images, mobile camera integration, password reset, and a production email provider are not implemented yet. Scan Mode can post QR Action/Quick Action transactions to the ledger.
+Weekly job wages and student allowances have external scheduler commands, but no scheduler is provisioned or enabled automatically. Inventory setup/adjustments, refund undo, reward images, mobile camera integration, password reset, and a production email provider are not implemented yet. Scan Mode can post QR Action/Quick Action transactions to the ledger.
 
 ## Local setup
 
@@ -171,6 +172,18 @@ an ID with different purchase inputs is rejected. Rejected attempts do not
 deduct money or create a purchase, and keep an idempotent rejection record.
 
 Student detail pages show historical purchases and their fulfillment status.
+The classroom-wide Reward Purchases & Fulfillment page lists purchases by
+status and provides a per-purchase event history with timestamps, actors, and
+notes. Owners and teachers can mark an unused purchase redeemed, or reopen a
+redeemed purchase with a required correction reason; assistants can view but
+cannot change fulfillment. Each transition appends a fulfillment audit event
+and changes only the purchase status, never its ledger amount, student balance,
+or stock. The forms carry the latest event ID and reject stale submissions,
+including an old redeem request submitted after a later correction. All
+fulfillment changes lock student, reward, and purchase in the same order as
+refunds to prevent conflicting concurrent operations. Cancelled purchases
+cannot be redeemed or reopened.
+
 For an unused purchase, owners and teachers can supply a refund reason and
 apply a coordinated refund. The service appends an exact positive `reversal`
 ledger entry linked to the original purchase transaction, updates the cached
@@ -184,7 +197,7 @@ be refunded using immutable purchase snapshots.
 Redeemed or already-cancelled purchases are not eligible for this workflow.
 Generic reversals of reward purchases, and generic undo of reward refund
 reversals, remain blocked because they would desynchronize purchase and
-inventory state. Inventory configuration/adjustments, redemption, undoing
+inventory state. Inventory configuration/adjustments, undoing
 a refund, availability scheduling, and image uploads are separate milestones.
 
 ## Classroom jobs

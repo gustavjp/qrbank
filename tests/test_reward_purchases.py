@@ -26,6 +26,9 @@ from app.services.financial import post_reward_purchase
 from app.services.financial import (
     FinancialIntegrityError, post_reward_refund, post_transaction_reversal,
 )
+from app.services.reward_fulfillment import (
+    FulfillmentConflictError, set_reward_fulfillment,
+)
 
 
 PASSWORD = "reward-purchase-test-password"
@@ -155,6 +158,32 @@ def _refund(
         f"/classrooms/{classroom}/students/{enrollment}/reward-purchases/{purchase_id}/refund",
         data={
             "note": note, "request_id": str(request_id or uuid.uuid4()),
+            "csrf_token": _csrf(client),
+        },
+    )
+
+
+def _latest_fulfillment_event_id(engine, purchase_id):
+    with Session(engine) as db:
+        return db.scalar(select(RewardFulfillmentEvent.id).where(
+            RewardFulfillmentEvent.reward_purchase_id == purchase_id,
+        ).order_by(
+            RewardFulfillmentEvent.occurred_at.desc(),
+            RewardFulfillmentEvent.id.desc(),
+        ).limit(1))
+
+
+def _fulfill_student(
+    client, classroom, enrollment, purchase_id, *,
+    target_status="redeemed", expected_event_id, note="",
+):
+    client.get(f"/classrooms/{classroom}/students/{enrollment}")
+    return client.post(
+        f"/classrooms/{classroom}/students/{enrollment}/reward-purchases/{purchase_id}/fulfill",
+        data={
+            "target_status": target_status,
+            "expected_event_id": str(expected_event_id),
+            "note": note,
             "csrf_token": _csrf(client),
         },
     )
@@ -860,3 +889,336 @@ def test_refund_rejected_if_refunded_balance_would_overflow_integer_range(engine
         assert db.get(Enrollment, student).current_balance == 2**31 - 10
         assert db.get(RewardPurchase, purchase_id).fulfillment_status == "unused"
     assert len(_rows(engine, FinancialTransaction, classroom)) == 1
+
+
+def test_fulfillment_redemption_and_reopening_are_audited_without_money_or_stock(engine):
+    client, owner = _client(engine)
+    classroom = _classroom(engine, owner)
+    student = _enrollment(engine, classroom)
+    reward = _reward(engine, classroom, stock=2, owner=owner)
+    assert _student_buy(client, classroom, student, reward).status_code == 303
+    purchase = _rows(engine, RewardPurchase, classroom)[0]
+    initial_event = _latest_fulfillment_event_id(engine, purchase.id)
+
+    student_page = client.get(f"/classrooms/{classroom}/students/{student}")
+    assert "Mark redeemed" in student_page.text
+    assert f"/reward-purchases/{purchase.id}/fulfill" in student_page.text
+    catalog = client.get(f"/classrooms/{classroom}/rewards")
+    assert "/reward-purchases" in catalog.text
+    overview = client.get(f"/classrooms/{classroom}/reward-purchases")
+    assert overview.status_code == 200 and "Fulfillment audit history" in overview.text
+
+    response = _fulfill_student(
+        client, classroom, student, purchase.id,
+        expected_event_id=initial_event, note="Reward handed to student",
+    )
+    assert response.status_code == 303 and "fulfilled=1" in response.headers["location"]
+    with Session(engine) as db:
+        assert db.get(RewardPurchase, purchase.id).fulfillment_status == "redeemed"
+        assert db.get(Enrollment, student).current_balance == 70
+        assert db.get(Reward, reward).quantity_available == 1
+    assert len(_rows(engine, FinancialTransaction, classroom)) == 1
+    assert len(_rows(engine, RewardInventoryEvent, classroom)) == 2
+
+    filtered = client.get(f"/classrooms/{classroom}/reward-purchases?show=redeemed")
+    assert filtered.status_code == 200
+    assert "Choose Your Seat" in filtered.text
+    assert "Reward handed to student" in filtered.text
+    assert "Reopen reward" in filtered.text
+    assert client.get(f"/classrooms/{classroom}/reward-purchases?show=unused").text.count(
+        "No reward purchases with this status"
+    ) == 1
+
+    redeemed_event = _latest_fulfillment_event_id(engine, purchase.id)
+    reopened = client.post(
+        f"/classrooms/{classroom}/reward-purchases/{purchase.id}/fulfill",
+        data={
+            "enrollment_id": str(student), "target_status": "unused",
+            "expected_event_id": str(redeemed_event),
+            "note": "Mistaken redemption confirmation", "csrf_token": _csrf(client),
+        },
+    )
+    assert reopened.status_code == 303 and "changed=1" in reopened.headers["location"]
+    with Session(engine) as db:
+        assert db.get(RewardPurchase, purchase.id).fulfillment_status == "unused"
+        assert db.get(Enrollment, student).current_balance == 70
+        assert db.get(Reward, reward).quantity_available == 1
+        events = list(db.scalars(select(RewardFulfillmentEvent).where(
+            RewardFulfillmentEvent.reward_purchase_id == purchase.id,
+        )))
+        assert len(events) == 3
+        assert {(e.from_status, e.to_status) for e in events} == {
+            (None, "unused"), ("unused", "redeemed"), ("redeemed", "unused"),
+        }
+        assert all(e.actor_user_id == owner for e in events)
+    assert len(_rows(engine, FinancialTransaction, classroom)) == 1
+    assert len(_rows(engine, RewardInventoryEvent, classroom)) == 2
+
+
+def test_stale_redemption_form_cannot_reapply_after_a_later_reopen(engine):
+    _, owner = _client(engine)
+    classroom = _classroom(engine, owner)
+    student = _enrollment(engine, classroom)
+    reward = _reward(engine, classroom)
+    with Session(engine) as db, db.begin():
+        purchased = post_reward_purchase(
+            db, actor_user_id=owner, classroom_id=classroom,
+            enrollment_id=student, reward_id=reward,
+            expected_price=30, request_id=uuid.uuid4(),
+        )
+        purchase_id = purchased.purchase.id
+    original_event = _latest_fulfillment_event_id(engine, purchase_id)
+
+    with Session(engine) as db, db.begin():
+        set_reward_fulfillment(
+            db, actor_user_id=owner, classroom_id=classroom,
+            enrollment_id=student, purchase_id=purchase_id,
+            target_status="redeemed", expected_event_id=original_event,
+        )
+    with pytest.raises(FulfillmentConflictError):
+        with Session(engine) as db, db.begin():
+            set_reward_fulfillment(
+                db, actor_user_id=owner, classroom_id=classroom,
+                enrollment_id=student, purchase_id=purchase_id,
+                target_status="redeemed", expected_event_id=original_event,
+            )
+    redeem_event = _latest_fulfillment_event_id(engine, purchase_id)
+    with Session(engine) as db, db.begin():
+        set_reward_fulfillment(
+            db, actor_user_id=owner, classroom_id=classroom,
+            enrollment_id=student, purchase_id=purchase_id,
+            target_status="unused", expected_event_id=redeem_event,
+            note="Correction",
+        )
+    with pytest.raises(FulfillmentConflictError):
+        with Session(engine) as db, db.begin():
+            set_reward_fulfillment(
+                db, actor_user_id=owner, classroom_id=classroom,
+                enrollment_id=student, purchase_id=purchase_id,
+                target_status="redeemed", expected_event_id=original_event,
+            )
+    with Session(engine) as db:
+        assert db.get(RewardPurchase, purchase_id).fulfillment_status == "unused"
+        assert db.get(Enrollment, student).current_balance == 70
+    assert len(_rows(engine, FinancialTransaction, classroom)) == 1
+
+
+def test_fulfillment_rollback_discards_status_and_event_together(engine):
+    _, owner = _client(engine)
+    classroom = _classroom(engine, owner)
+    student = _enrollment(engine, classroom)
+    reward = _reward(engine, classroom)
+    with Session(engine) as db, db.begin():
+        outcome = post_reward_purchase(
+            db, actor_user_id=owner, classroom_id=classroom,
+            enrollment_id=student, reward_id=reward,
+            expected_price=30, request_id=uuid.uuid4(),
+        )
+        purchase_id = outcome.purchase.id
+    event_id = _latest_fulfillment_event_id(engine, purchase_id)
+    with pytest.raises(RuntimeError):
+        with Session(engine) as db, db.begin():
+            set_reward_fulfillment(
+                db, actor_user_id=owner, classroom_id=classroom,
+                enrollment_id=student, purchase_id=purchase_id,
+                target_status="redeemed", expected_event_id=event_id,
+            )
+            raise RuntimeError("abort before commit")
+    with Session(engine) as db:
+        assert db.get(RewardPurchase, purchase_id).fulfillment_status == "unused"
+        assert db.get(Enrollment, student).current_balance == 70
+        assert len(list(db.scalars(select(RewardFulfillmentEvent).where(
+            RewardFulfillmentEvent.reward_purchase_id == purchase_id,
+        )))) == 1
+    with Session(engine) as db, db.begin():
+        set_reward_fulfillment(
+            db, actor_user_id=owner, classroom_id=classroom,
+            enrollment_id=student, purchase_id=purchase_id,
+            target_status="redeemed", expected_event_id=event_id,
+        )
+    with Session(engine) as db:
+        assert db.get(RewardPurchase, purchase_id).fulfillment_status == "redeemed"
+
+
+def test_fulfillment_respects_classroom_student_roles_and_csrf(engine):
+    client, owner = _client(engine)
+    outsider_client, outsider = _client(engine)
+    assistant_client, assistant = _client(engine)
+    classroom = _classroom(engine, owner)
+    other_classroom = _classroom(engine, outsider)
+    student = _enrollment(engine, classroom)
+    other_student = _enrollment(engine, classroom, "02")
+    foreign_student = _enrollment(engine, other_classroom)
+    reward = _reward(engine, classroom)
+    assert _student_buy(client, classroom, student, reward).status_code == 303
+    purchase = _rows(engine, RewardPurchase, classroom)[0]
+    initial_event = _latest_fulfillment_event_id(engine, purchase.id)
+    with Session(engine) as db, db.begin():
+        db.add(ClassroomMembership(
+            id=uuid.uuid4(), classroom_id=classroom, user_id=assistant,
+            role="assistant", created_by_user_id=owner,
+        ))
+
+    history_url = f"/classrooms/{classroom}/reward-purchases"
+    assert outsider_client.get(history_url).status_code == 404
+    history = assistant_client.get(history_url)
+    assert history.status_code == 200
+    assert "Choose Your Seat" in history.text
+    assert "Mark redeemed" not in history.text
+    assert "Fulfillment audit history" in history.text
+
+    assert _fulfill_student(
+        outsider_client, classroom, student, purchase.id,
+        expected_event_id=initial_event,
+    ).status_code == 404
+    assert _fulfill_student(
+        assistant_client, classroom, student, purchase.id,
+        expected_event_id=initial_event,
+    ).status_code == 403
+    assert _fulfill_student(
+        client, classroom, other_student, purchase.id,
+        expected_event_id=initial_event,
+    ).status_code == 404
+    assert _fulfill_student(
+        client, classroom, foreign_student, purchase.id,
+        expected_event_id=initial_event,
+    ).status_code == 404
+
+    url = f"{history_url}/{purchase.id}/fulfill"
+    params = {
+        "enrollment_id": str(student), "target_status": "redeemed",
+        "expected_event_id": str(initial_event), "csrf_token": "invalid",
+    }
+    assert client.post(url, data=params).status_code == 403
+    assert TestClient(app, follow_redirects=False).post(url, data=params).status_code == 401
+    with Session(engine) as db:
+        assert db.get(RewardPurchase, purchase.id).fulfillment_status == "unused"
+    assert len(_rows(engine, FinancialTransaction, classroom)) == 1
+
+
+def test_fulfillment_validation_stale_and_cancelled_states(engine):
+    client, owner = _client(engine)
+    classroom = _classroom(engine, owner)
+    student = _enrollment(engine, classroom)
+    reward = _reward(engine, classroom)
+    assert _student_buy(client, classroom, student, reward).status_code == 303
+    purchase = _rows(engine, RewardPurchase, classroom)[0]
+    original_event = _latest_fulfillment_event_id(engine, purchase.id)
+
+    assert _fulfill_student(
+        client, classroom, student, purchase.id,
+        target_status="unused", expected_event_id=original_event,
+        note="Not a correction",
+    ).status_code == 409
+    assert _fulfill_student(
+        client, classroom, student, purchase.id,
+        target_status="cancelled", expected_event_id=original_event,
+    ).status_code == 400
+    assert _fulfill_student(
+        client, classroom, student, purchase.id,
+        expected_event_id=uuid.uuid4(),
+    ).status_code == 409
+
+    assert _fulfill_student(
+        client, classroom, student, purchase.id,
+        expected_event_id=original_event,
+    ).status_code == 303
+    redeemed_event = _latest_fulfillment_event_id(engine, purchase.id)
+    assert _fulfill_student(
+        client, classroom, student, purchase.id,
+        target_status="unused", expected_event_id=redeemed_event,
+        note="  ",
+    ).status_code == 400
+    assert _refund(client, classroom, student, purchase.id).status_code == 422
+    assert _fulfill_student(
+        client, classroom, student, purchase.id,
+        target_status="unused", expected_event_id=redeemed_event,
+        note="Record was marked redeemed by mistake",
+    ).status_code == 303
+    assert _refund(client, classroom, student, purchase.id).status_code == 303
+    cancelled_event = _latest_fulfillment_event_id(engine, purchase.id)
+    assert _fulfill_student(
+        client, classroom, student, purchase.id,
+        expected_event_id=cancelled_event,
+    ).status_code == 409
+    assert _fulfill_student(
+        client, classroom, student, purchase.id,
+        target_status="unused", expected_event_id=cancelled_event,
+        note="Attempt undo refund",
+    ).status_code == 409
+    with Session(engine) as db:
+        assert db.get(RewardPurchase, purchase.id).fulfillment_status == "cancelled"
+        assert db.get(Enrollment, student).current_balance == 100
+        assert db.scalar(select(RewardFulfillmentEvent.id).where(
+            RewardFulfillmentEvent.reward_purchase_id == purchase.id,
+        ).limit(1)) is not None
+        assert len(list(db.scalars(select(RewardFulfillmentEvent).where(
+            RewardFulfillmentEvent.reward_purchase_id == purchase.id,
+        )))) == 4
+    assert len(_rows(engine, FinancialTransaction, classroom)) == 2
+
+
+def test_refund_and_redemption_compete_without_double_status_or_money(engine):
+    _, owner = _client(engine)
+    classroom = _classroom(engine, owner)
+    student = _enrollment(engine, classroom)
+    reward = _reward(engine, classroom, stock=1, owner=owner)
+    with Session(engine) as db, db.begin():
+        outcome = post_reward_purchase(
+            db, actor_user_id=owner, classroom_id=classroom,
+            enrollment_id=student, reward_id=reward,
+            expected_price=30, request_id=uuid.uuid4(),
+        )
+        purchase_id = outcome.purchase.id
+    original_event = _latest_fulfillment_event_id(engine, purchase_id)
+
+    def refund():
+        with Session(engine) as db, db.begin():
+            result = post_reward_refund(
+                db, actor_user_id=owner, classroom_id=classroom,
+                enrollment_id=student, purchase_id=purchase_id,
+                note="Refund requested", request_id=uuid.uuid4(),
+            )
+            return result.rejection_code or "refunded"
+
+    def redeem():
+        try:
+            with Session(engine) as db, db.begin():
+                set_reward_fulfillment(
+                    db, actor_user_id=owner, classroom_id=classroom,
+                    enrollment_id=student, purchase_id=purchase_id,
+                    target_status="redeemed", expected_event_id=original_event,
+                )
+            return "redeemed"
+        except FulfillmentConflictError:
+            return "conflict"
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        refund_future = pool.submit(refund)
+        redeem_future = pool.submit(redeem)
+        refund_outcome, redeem_outcome = refund_future.result(), redeem_future.result()
+
+    assert (refund_outcome, redeem_outcome) in {
+        ("refunded", "conflict"),
+        ("already_redeemed", "redeemed"),
+    }
+    with Session(engine) as db:
+        purchase = db.get(RewardPurchase, purchase_id)
+        enrollment = db.get(Enrollment, student)
+        stock = db.get(Reward, reward).quantity_available
+        events = list(db.scalars(select(RewardFulfillmentEvent).where(
+            RewardFulfillmentEvent.reward_purchase_id == purchase_id,
+        )))
+    assert len(events) == 2
+    if refund_outcome == "refunded":
+        assert (purchase.fulfillment_status, enrollment.current_balance, stock) == (
+            "cancelled", 100, 1,
+        )
+        assert len(_rows(engine, FinancialTransaction, classroom)) == 2
+        assert len(_rows(engine, RewardInventoryEvent, classroom)) == 3
+    else:
+        assert (purchase.fulfillment_status, enrollment.current_balance, stock) == (
+            "redeemed", 70, 0,
+        )
+        assert len(_rows(engine, FinancialTransaction, classroom)) == 1
+        assert len(_rows(engine, RewardInventoryEvent, classroom)) == 2

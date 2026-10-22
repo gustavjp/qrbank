@@ -3,6 +3,7 @@
 {% block content %}
 <p><a href="/classrooms/{{ classroom.id }}">← {{ classroom.name }}</a></p>
 <h1>Classroom Rewards</h1>
+<p><a href="/classrooms/{{ classroom.id }}/reward-purchases">View reward purchases and manage fulfillment</a></p>
 <p class="muted">Configure classroom rewards and their point prices, then purchase them for active students. Purchases deduct points and create permanent financial and purchase records. Inventory setup and images will be added separately.</p>
 {% if purchased %}<p class="success">Reward purchased and recorded in the ledger.</p>{% endif %}
 {% if replayed %}<p class="success">This purchase was already processed; no duplicate charge occurred.</p>{% endif %}

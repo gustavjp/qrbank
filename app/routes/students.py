@@ -30,7 +30,7 @@ from app.services.financial import (
 )
 from app.services.roster_exports import iter_classroom_roster_csv
 from app.models.reward import Reward
-from app.models.reward_purchase import RewardPurchase
+from app.models.reward_purchase import RewardFulfillmentEvent, RewardPurchase
 from app.services.students import (
     STUDENT_MANAGER_ROLES,
     StudentNotFoundError,
@@ -273,6 +273,7 @@ def student_detail(
     replayed: int = 0,
     purchased: int = 0,
     refunded: int = 0,
+    fulfilled: int = 0,
     db: Session = Depends(get_db),
 ):
     user = current_user_from_request(request, db)
@@ -285,7 +286,7 @@ def student_detail(
         saved=bool(saved), posted=bool(posted),
         adjusted=bool(adjusted), reversed=bool(reversed),
         replayed=bool(replayed), purchased=bool(purchased),
-        refunded=bool(refunded),
+        refunded=bool(refunded), fulfilled=bool(fulfilled),
     )
 
 
@@ -294,7 +295,7 @@ def _detail_response(
     classroom_id: uuid.UUID, enrollment_id: uuid.UUID,
     saved: bool = False, posted: bool = False, adjusted: bool = False,
     reversed: bool = False, replayed: bool = False, purchased: bool = False,
-    refunded: bool = False,
+    refunded: bool = False, fulfilled: bool = False,
     financial_error: str | None = None, status_code: int = 200,
 ):
     try:
@@ -317,6 +318,16 @@ def _detail_response(
         RewardPurchase.classroom_id == classroom_id,
         RewardPurchase.enrollment_id == enrollment_id,
     ).order_by(RewardPurchase.purchased_at.desc(), RewardPurchase.id.desc())))
+    reward_latest_events = {}
+    if reward_purchases:
+        events = db.scalars(select(RewardFulfillmentEvent).where(
+            RewardFulfillmentEvent.reward_purchase_id.in_([p.id for p in reward_purchases]),
+        ).order_by(
+            RewardFulfillmentEvent.occurred_at.desc(),
+            RewardFulfillmentEvent.id.desc(),
+        ))
+        for event in events:
+            reward_latest_events.setdefault(event.reward_purchase_id, event.id)
     return _form_response(
         request,
         template_name="student_detail.html",
@@ -329,11 +340,13 @@ def _detail_response(
             "can_manage": can_manage,
             "saved": saved, "posted": posted,
             "adjusted": adjusted, "reversed": reversed,
-            "replayed": replayed, "purchased": purchased, "refunded": refunded,
+            "replayed": replayed, "purchased": purchased,
+            "refunded": refunded, "fulfilled": fulfilled,
             "financial_error": financial_error,
             "available_rewards": available_rewards,
             "reward_purchases": reward_purchases,
             "reward_refund_request_ids": {p.id: uuid.uuid4() for p in reward_purchases},
+            "reward_latest_events": reward_latest_events,
             "purchase_request_ids": {r.id: uuid.uuid4() for r in available_rewards},
             "manual_request_id": uuid.uuid4(),
             "adjustment_request_id": uuid.uuid4(),
