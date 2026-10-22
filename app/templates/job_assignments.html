@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+{% block title %}Job Assignments · {{ classroom.name }} · QRBank{% endblock %}
+{% block content %}
+<p><a href="/classrooms/{{ classroom.id }}/jobs">← Classroom Jobs</a></p>
+<h1>Student Job Assignments</h1>
+<p class="muted">Students may hold multiple jobs. An assignment starts on the classroom-local date; ending it preserves its history. No wages or point transfers occur on this page.</p>
+
+{% if selected_enrollment_id %}
+<p><a href="/classrooms/{{ classroom.id }}/job-assignments">View all classroom assignments</a></p>
+{% endif %}
+
+{% if can_manage %}
+<h2>Assign a job</h2>
+{% if active_enrollments and active_jobs %}
+<form method="post" action="/classrooms/{{ classroom.id }}/job-assignments/new">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+  <label>Active student
+    <select name="enrollment_id" required>
+      {% for student, enrollment in active_enrollments %}
+      <option value="{{ enrollment.id }}" {% if enrollment.id == selected_enrollment_id %}selected{% endif %}>{{ enrollment.student_code }} — {{ student.display_name or "Unnamed student" }}</option>
+      {% endfor %}
+    </select>
+  </label>
+  <label>Active job
+    <select name="job_id" required>
+      {% for job in active_jobs %}
+      <option value="{{ job.id }}">{{ job.job_code }} — {{ job.name }} ({{ job.weekly_wage }} per week)</option>
+      {% endfor %}
+    </select>
+  </label>
+  <button class="primary" type="submit">Assign job</button>
+</form>
+{% else %}
+<p class="muted">To assign jobs, add an active student and an active classroom job first.</p>
+{% endif %}
+{% endif %}
+
+<h2>Assignments and history</h2>
+{% if rows %}
+  {% for row in rows %}
+  <div style="border-bottom:1px solid #dfe5ec; padding:.6rem 0;">
+    <strong>{{ row.enrollment.student_code }} — {{ row.student.display_name or "Unnamed student" }}</strong>
+    <div>{{ row.job.job_code }} — {{ row.job.name }} · {{ row.job.weekly_wage }} points/week (current job rate)</div>
+    <div>Started {{ row.assignment.started_on.isoformat() }} · {% if row.assignment.ended_on %}Ended {{ row.assignment.ended_on.isoformat() }}{% else %}Active assignment{% endif %}</div>
+    {% if not row.job.active %}<div class="muted">Job is inactive</div>{% endif %}
+    {% if not row.enrollment.active %}<div class="muted">Student is inactive</div>{% endif %}
+    {% if can_manage and not row.assignment.ended_on %}
+    <form method="post" action="/classrooms/{{ classroom.id }}/job-assignments/{{ row.assignment.id }}/end">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <button class="secondary" type="submit">End assignment</button>
+    </form>
+    {% endif %}
+  </div>
+  {% endfor %}
+{% else %}
+<p>No job assignments found.</p>
+{% endif %}
+{% endblock %}

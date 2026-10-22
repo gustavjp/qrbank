@@ -37,6 +37,7 @@ The current application includes:
 - classroom-wide read-only positive/negative behavior event history, student/type/local-date filters, full-filter summary counts, and stable pagination
 - eight-week classroom-local positive/negative behavior trend chart using the same authorized student/type/date filters
 - classroom-scoped job definitions with audited create/edit/deactivate/reactivate and nonnegative weekly wages
+- classroom-scoped student job assignments with duplicate-active prevention, end dates, and durable audit history
 - classroom-configured positive/negative behavior reasons and audited post-scan reason/detail attachment, without financial ledger mutation
 - classroom-wide read-only ledger browsing with tenant-bound student/type/source/category/local-date filters and stable keyset pagination
 - authorized streaming CSV export of all filtered posted ledger entries, with immutable identifiers, numeric balances, local/UTC timestamps, and spreadsheet formula safeguards
@@ -48,7 +49,7 @@ The current application includes:
 - health and readiness endpoints
 - PostgreSQL-backed automated tests
 
-Job assignments and automatic wage payments, mobile camera integration, rewards UI, scheduled payments, password reset, and a production email provider are not implemented yet. Scan Mode can post QR Action/Quick Action transactions to the ledger.
+Automatic wage payments, mobile camera integration, rewards UI, scheduled payments, password reset, and a production email provider are not implemented yet. Scan Mode can post QR Action/Quick Action transactions to the ledger.
 
 ## Local setup
 
@@ -144,9 +145,18 @@ catalog but cannot change it. Each meaningful change writes a before/after
 administrative audit event. Duplicate job codes are rejected within a classroom.
 
 Job definitions are configuration only: they never change student balances,
-create financial requests, or pay wages. Student assignments and automatic
-weekly wage transactions will be introduced separately through the central
-financial service, with PostgreSQL idempotency and ledger guarantees.
+create financial requests, or pay wages. Teachers can also open Student Job
+Assignments to assign an active job to an active student, and end assignments
+without removing history. A student may hold multiple different active jobs;
+the same student/job pair cannot be actively assigned twice. Dates are recorded
+in the classroom's IANA timezone. Deactivated jobs and students cannot receive
+new assignments, but their existing assignments can still be ended. Meaningful
+assignment creation/end changes are administratively audited, and assistants
+have read-only access.
+
+Job assignments do not pay wages or modify balances. Automatic weekly wage
+transactions will be introduced separately through the central financial
+service, with PostgreSQL idempotency and append-only ledger guarantees.
 
 ## Weekly behavior analytics
 
