@@ -680,7 +680,7 @@ def post_balance_adjustment(
         return reject("already_at_target")
     if target_balance < 0 and not settings.allow_negative_balance:
         return reject("negative_balance_disabled")
-    if not -(2**31) <= amount <= 2**31 - 1:
+    if not -(2**31 - 1) <= amount <= 2**31 - 1:
         return reject("amount_out_of_range")
 
     transaction = FinancialTransaction(
@@ -771,7 +771,7 @@ def post_transaction_reversal(
     ).limit(1))
     if reversed_already is not None:
         return reject("already_reversed")
-    if not -(2**31) <= amount <= 2**31 - 1:
+    if not -(2**31 - 1) <= amount <= 2**31 - 1:
         return reject("amount_out_of_range")
     if after < 0 and not settings.allow_negative_balance:
         return reject("insufficient_balance")
