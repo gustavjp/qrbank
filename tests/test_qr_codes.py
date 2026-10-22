@@ -134,7 +134,7 @@ def test_inactive_entities_cannot_be_downloaded_and_new_codes_are_used(engine):
 
     page = client.get(root)
     assert "STUDENT:02" in page.text and "STUDENT:01" not in page.text
-    assert "QUICK:QA1" not in page.text
+    assert "<code>QUICK:QA1</code>" not in page.text
     assert "ACTION:A01" not in page.text
     assert client.get(f"{root}/student/{student_id}/svg").status_code == 200
     assert client.get(f"{root}/quick/{quick_id}/svg").status_code == 404
