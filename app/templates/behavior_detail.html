@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+{% block title %}Behavior detail · {{ classroom.name }} · QRBank{% endblock %}
+{% block content %}
+<p><a href="/classrooms/{{ classroom.id }}/behavior">← Behavior history</a></p>
+<h1>{{ event.behavior_type|title }} behavior detail</h1>
+<p class="muted">Event {{ event.id }} · {{ event.occurred_at.isoformat() }} · Enrollment {{ event.enrollment_id }}</p>
+{% if event.action_code_snapshot %}
+  <p>Action {{ event.action_code_snapshot }} — {{ event.action_name_snapshot or '' }}</p>
+{% endif %}
+{% if saved %}<p role="status">Behavior detail saved.</p>{% endif %}
+<p class="muted">Editing the reason or note never changes points, the financial transaction, or the time of the original behavior event.</p>
+
+{% if can_manage %}
+  <form method="post" action="/classrooms/{{ classroom.id }}/behavior/events/{{ event.id }}/edit">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <label>Structured reason
+      <select name="reason_id">
+        <option value="">No structured reason</option>
+        {% for reason in choices %}
+          <option value="{{ reason.id }}" {% if event.behavior_reason_id == reason.id %}selected{% endif %}>
+            {{ reason.reason_code }} — {{ reason.name }}{% if not reason.active %} (inactive, previously attached){% endif %}
+          </option>
+        {% endfor %}
+      </select>
+    </label>
+    {% if event.reason_name_snapshot %}
+      <p class="muted">Recorded reason snapshot: {{ event.reason_code_snapshot }} — {{ event.reason_name_snapshot }}</p>
+    {% endif %}
+    <label>Detail note
+      <textarea name="note" rows="4" maxlength="2000">{{ event.note or '' }}</textarea>
+    </label>
+    <button class="primary" type="submit">Save behavior detail</button>
+  </form>
+  <p><a href="/classrooms/{{ classroom.id }}/behavior/reasons">Configure reasons</a></p>
+{% else %}
+  <p>Reason: {{ event.reason_name_snapshot or 'Not recorded' }}{% if event.reason_code_snapshot %} ({{ event.reason_code_snapshot }}){% endif %}</p>
+  <p>Detail note: {{ event.note or 'None' }}</p>
+  <p class="muted">Only classroom owners and teachers can edit behavior detail.</p>
+{% endif %}
+
+<h2>Recent detail changes</h2>
+{% if audits %}
+  {% for audit in audits %}
+    <div style="border-bottom:1px solid #dfe5ec; padding:.6rem 0;">
+      <strong>{{ audit.occurred_at.isoformat() }}</strong>
+      <div class="muted">Changed by user {{ audit.actor_user_id }}</div>
+      <div>Before: {{ audit.before_json.reason_name or 'No reason' }}{% if audit.before_json.note %} — {{ audit.before_json.note }}{% endif %}</div>
+      <div>After: {{ audit.after_json.reason_name or 'No reason' }}{% if audit.after_json.note %} — {{ audit.after_json.note }}{% endif %}</div>
+    </div>
+  {% endfor %}
+  <p class="muted">Showing up to 50 most recent changes. Administrative audit records are retained.</p>
+{% else %}
+  <p class="muted">No recorded detail changes yet.</p>
+{% endif %}
+{% endblock %}

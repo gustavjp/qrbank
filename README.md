@@ -35,6 +35,7 @@ The current application includes:
 - atomic manual credit/deduction flow with required reason, category, idempotency, and behavior-event linkage
 - per-student ledger history with category, note, source, and balances
 - classroom-wide read-only positive/negative behavior event history, student/type/local-date filters, full-filter summary counts, and stable pagination
+- classroom-configured positive/negative behavior reasons and audited post-scan reason/detail attachment, without financial ledger mutation
 - classroom-wide read-only ledger browsing with tenant-bound student/type/source/category/local-date filters and stable keyset pagination
 - authorized streaming CSV export of all filtered posted ledger entries, with immutable identifiers, numeric balances, local/UTC timestamps, and spreadsheet formula safeguards
 - authorized classroom roster/balance CSV export with active/all selection, integer balances, enrollment status and dates, and spreadsheet formula safeguards
@@ -154,6 +155,26 @@ codes tied to ledger transactions use their historical financial snapshots.
 CSV exports require classroom membership, recheck it inside a read-only
 repeatable-read PostgreSQL transaction, escape spreadsheet formulas in text,
 and do not modify balances or history. Treat student codes as text on import.
+
+## Behavior reasons and post-scan detail
+
+From a classroom's Behavior history, open **View and manage behavior reasons**
+to create positive or negative reasons with classroom-specific codes, names,
+descriptions, and active/inactive states. Classroom owners and teachers can
+create, edit and deactivate reasons; assistants have read-only access.
+Reason type is fixed after creation. Inactive reasons remain in historical
+records and cannot be newly attached.
+
+Use **View or update behavior detail** on an event to attach an active reason of
+the matching type and an optional note after a QR scan or manual behavior post.
+A reason's code/name are snapshotted into the behavior event at attachment and
+remain unchanged when its catalog definition is renamed. Subsequent changes
+to event reason/note are recorded atomically in administrative audit history,
+including before and after values. Zero-point behavior events are supported.
+
+These operations never change FinancialTransaction rows, balances, behavior
+event types or timestamps. All writes are classroom-scoped, owner/teacher-only,
+CSRF-validated, and backed by PostgreSQL transactions.
 
 ## Production security defaults
 

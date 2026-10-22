@@ -39,6 +39,7 @@
 <p class="muted">Counts include all pages and behavior events without point changes. Reversing points does not erase a recorded behavior event.</p>
 
 <p><a href="{{ export_url }}">Download matching behavior events (CSV)</a></p>
+<p><a href="/classrooms/{{ classroom.id }}/behavior/reasons">View and manage behavior reasons</a></p>
 
 <h2>Events{% if rows %} ({{ rows|length }} on this page){% endif %}</h2>
 {% if rows %}
@@ -51,6 +52,7 @@
         · <a href="/classrooms/{{ classroom.id }}/students/{{ event.enrollment_id }}">Student {{ row.student_code }}</a>
         {% if row.student_name %} — {{ row.student_name }}{% endif %}
         <div class="muted">{{ row.occurred_local.strftime("%Y-%m-%d %I:%M %p %Z") }} · Event {{ event.id }}</div>
+        <div><a href="/classrooms/{{ classroom.id }}/behavior/events/{{ event.id }}/edit">View or update behavior detail</a></div>
         {% if event.action_code_snapshot %}
           <div>Action {{ event.action_code_snapshot }}{% if event.action_name_snapshot %} — {{ event.action_name_snapshot }}{% endif %}</div>
         {% elif tx %}

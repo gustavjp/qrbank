@@ -1,6 +1,6 @@
 from app.models.action import Action, QuickAction
 from app.models.audit import AdminAuditEvent
-from app.models.behavior import BehaviorEvent
+from app.models.behavior import BehaviorEvent, BehaviorReason
 from app.models.auth import AuthToken, User, UserSession
 from app.models.base import Base
 from app.models.classroom import Classroom, ClassroomMembership, ClassroomSettings
@@ -13,6 +13,7 @@ __all__ = [
     "AuthToken",
     "Base",
     "BehaviorEvent",
+    "BehaviorReason",
     "Classroom",
     "ClassroomMembership",
     "ClassroomSettings",
