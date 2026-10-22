@@ -35,6 +35,7 @@ The current application includes:
 - atomic manual credit/deduction flow with required reason, category, idempotency, and behavior-event linkage
 - per-student ledger history with category, note, source, and balances
 - classroom-wide read-only ledger browsing with tenant-bound student/type/source/category/local-date filters and stable keyset pagination
+- authorized streaming CSV export of all filtered posted ledger entries, with immutable identifiers, numeric balances, local/UTC timestamps, and spreadsheet formula safeguards
 - audited set-balance adjustments (server-computed difference) and append-only transaction reversals
 - exact inverse reversals, reversal-of-reversal support, and duplicate undo protection
 - central opening-balance, QR Action, and manual financial posting services with PostgreSQL row locking and idempotency
@@ -100,6 +101,19 @@ pytest
 ```
 
 The integration test suite requires a disposable PostgreSQL database. GitHub Actions runs the suite against PostgreSQL 16.
+
+## Classroom transaction CSV export
+
+From a classroom's transaction history, use **Download matching transactions (CSV)**.
+The download includes all posted ledger entries matching the selected student, type,
+source, manual category, and classroom-local dates—not only the displayed page.
+It includes transaction/request IDs, enrollment IDs, historical codes and action
+snapshots, integer amounts and balance changes, reversals, and both UTC and
+classroom-local timestamps with the classroom timezone. Rejected financial requests
+do not appear in the ledger export. Exports are read-only, membership-authorized
+and generated from a consistent PostgreSQL snapshot; dangerous spreadsheet
+formula prefixes in text fields are escaped. Student codes such as `01` should
+be imported as text to preserve leading zeros in spreadsheet software.
 
 ## Production security defaults
 

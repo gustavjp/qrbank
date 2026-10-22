@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import or_, select
+from sqlalchemy import Select, or_, select
 from sqlalchemy.orm import Session
 
 from app.models.classroom import ClassroomSettings
@@ -43,6 +43,14 @@ class TransactionHistoryRow:
 
 
 @dataclass(frozen=True)
+class TransactionHistorySelection:
+    access: ClassroomAccess
+    roster: list[tuple[Student, Enrollment]]
+    statement: Select[tuple[FinancialTransaction]]
+    timezone_name: str
+
+
+@dataclass(frozen=True)
 class TransactionHistoryPage:
     access: ClassroomAccess
     roster: list[tuple[Student, Enrollment]]
@@ -51,7 +59,7 @@ class TransactionHistoryPage:
     timezone_name: str
 
 
-def list_classroom_transactions(
+def select_classroom_transactions(
     db: Session,
     *,
     user_id: uuid.UUID,
@@ -62,9 +70,8 @@ def list_classroom_transactions(
     category: str = "",
     date_from: date | None = None,
     date_to: date | None = None,
-    before: int | None = None,
-) -> TransactionHistoryPage:
-    """Read-only, keyset-paged classroom ledger with all filters tenant-bound."""
+) -> TransactionHistorySelection:
+    """Authorize and build the shared, classroom-scoped ledger filter query."""
     access = require_classroom_access(
         db, user_id=user_id, classroom_id=classroom_id,
     )
@@ -76,8 +83,6 @@ def list_classroom_transactions(
         raise TransactionHistoryValidationError("invalid manual category filter")
     if date_from and date_to and date_from > date_to:
         raise TransactionHistoryValidationError("start date must be on or before end date")
-    if before is not None and before <= 0:
-        raise TransactionHistoryValidationError("invalid pagination cursor")
 
     settings = db.get(ClassroomSettings, classroom_id)
     if settings is None:
@@ -117,6 +122,38 @@ def list_classroom_transactions(
             raise TransactionHistoryValidationError("end date is outside supported range") from exc
         upper = datetime.combine(next_day, time.min, tzinfo=zone).astimezone(timezone.utc)
         stmt = stmt.where(FinancialTransaction.occurred_at < upper)
+
+    return TransactionHistorySelection(
+        access=access,
+        roster=roster,
+        statement=stmt,
+        timezone_name=settings.timezone,
+    )
+
+
+def list_classroom_transactions(
+    db: Session,
+    *,
+    user_id: uuid.UUID,
+    classroom_id: uuid.UUID,
+    enrollment_id: uuid.UUID | None = None,
+    transaction_type: str = "",
+    source: str = "",
+    category: str = "",
+    date_from: date | None = None,
+    date_to: date | None = None,
+    before: int | None = None,
+) -> TransactionHistoryPage:
+    """Read-only, keyset-paged classroom ledger with all filters tenant-bound."""
+    selection = select_classroom_transactions(
+        db, user_id=user_id, classroom_id=classroom_id,
+        enrollment_id=enrollment_id, transaction_type=transaction_type,
+        source=source, category=category, date_from=date_from, date_to=date_to,
+    )
+    if before is not None and before <= 0:
+        raise TransactionHistoryValidationError("invalid pagination cursor")
+    stmt = selection.statement
+    zone = ZoneInfo(selection.timezone_name)
     if before is not None:
         stmt = stmt.where(FinancialTransaction.display_number < before)
 
@@ -150,8 +187,8 @@ def list_classroom_transactions(
     }
 
     return TransactionHistoryPage(
-        access=access,
-        roster=[(student, enrollment) for student, enrollment in roster],
+        access=selection.access,
+        roster=selection.roster,
         rows=[
             TransactionHistoryRow(
                 transaction=tx,
@@ -165,5 +202,5 @@ def list_classroom_transactions(
             for tx in visible
         ],
         next_before=next_before,
-        timezone_name=settings.timezone,
+        timezone_name=selection.timezone_name,
     )
