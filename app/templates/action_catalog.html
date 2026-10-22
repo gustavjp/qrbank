@@ -1,0 +1,76 @@
+{% extends "base.html" %}
+{% block title %}Actions · {{ classroom.name }} · QRBank{% endblock %}
+{% block content %}
+<p><a href="/classrooms/{{ classroom.id }}">← {{ classroom.name }}</a></p>
+<h1>Actions and Quick Actions</h1>
+<p class="muted">Actions define amounts. Quick Actions map a reusable QR code to one Action. No points are transferred on this page.</p>
+
+<h2>Actions</h2>
+{% if actions %}
+  {% for action in actions %}
+  <div style="border-bottom:1px solid #dfe5ec; padding:.6rem 0;">
+    <strong>{{ action.action_code }} — {{ action.name }}</strong>
+    <div>{{ action.action_kind }} · {{ "+" if action.amount > 0 else "" }}{{ action.amount }} points · {{ "Active" if action.active else "Inactive" }}</div>
+    {% if can_manage %}
+    <a href="/classrooms/{{ classroom.id }}/actions/{{ action.id }}/edit">Edit</a>
+    <form style="display:inline" method="post" action="/classrooms/{{ classroom.id }}/actions/{{ action.id }}/active">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <input type="hidden" name="active" value="{{ 'false' if action.active else 'true' }}">
+      <button class="secondary" type="submit">{{ "Deactivate" if action.active else "Reactivate" }}</button>
+    </form>
+    {% endif %}
+  </div>
+  {% endfor %}
+{% else %}<p>No Actions configured yet.</p>{% endif %}
+
+{% if can_manage %}
+<h3>Create Action</h3>
+<form method="post" action="/classrooms/{{ classroom.id }}/actions/new">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+  <label>Action code <input name="code" required maxlength="32" placeholder="A01"></label>
+  <label>Name <input name="name" required placeholder="General +5"></label>
+  <label>Category
+    <select name="kind" required>
+      {% for kind in kinds %}<option value="{{ kind }}">{{ kind }}</option>{% endfor %}
+    </select>
+  </label>
+  <label>Signed points <input type="number" name="amount" required value="5"></label>
+  <label>Description (optional) <input name="description"></label>
+  <button class="primary" type="submit">Create Action</button>
+</form>
+{% endif %}
+
+<h2>Quick Actions</h2>
+{% if quick_actions %}
+  {% for quick in quick_actions %}
+  {% set linked = action_by_id.get(quick.action_id) %}
+  <div style="border-bottom:1px solid #dfe5ec; padding:.6rem 0;">
+    <strong>{{ quick.quick_action_code }}</strong> → {{ linked.action_code if linked else "Missing Action" }}
+    <div>Order {{ quick.display_order }} · {{ "Active" if quick.active else "Inactive" }}{% if linked and not linked.active %} · Target Action inactive{% endif %}</div>
+    {% if can_manage %}
+    <a href="/classrooms/{{ classroom.id }}/actions/quick/{{ quick.id }}/edit">Edit mapping</a>
+    <form style="display:inline" method="post" action="/classrooms/{{ classroom.id }}/actions/quick/{{ quick.id }}/active">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <input type="hidden" name="active" value="{{ 'false' if quick.active else 'true' }}">
+      <button class="secondary" type="submit">{{ "Deactivate" if quick.active else "Reactivate" }}</button>
+    </form>
+    {% endif %}
+  </div>
+  {% endfor %}
+{% else %}<p>No Quick Actions configured yet.</p>{% endif %}
+
+{% if can_manage and actions %}
+<h3>Create Quick Action</h3>
+<form method="post" action="/classrooms/{{ classroom.id }}/actions/quick/new">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+  <label>Quick code <input name="code" required maxlength="32" placeholder="QA1"></label>
+  <label>Target Action
+    <select name="action_id" required>
+      {% for action in actions %}<option value="{{ action.id }}">{{ action.action_code }} — {{ action.name }}{% if not action.active %} (inactive){% endif %}</option>{% endfor %}
+    </select>
+  </label>
+  <label>Display order <input type="number" name="display_order" required min="0" value="0"></label>
+  <button class="primary" type="submit">Create Quick Action</button>
+</form>
+{% endif %}
+{% endblock %}

@@ -26,13 +26,16 @@ The current application includes:
 - owner-only classroom settings management
 - strict server-side membership authorization for every classroom read/write
 - student enrollment list/create/detail/edit flows
+- classroom-scoped Action and Quick Action creation, editing, and activation controls
+- owner/teacher management permissions and assistant read access for Actions
+- action configuration audit history; configuration never changes a balance
 - classroom-scoped student codes with active/inactive status
 - central opening-balance financial posting service with PostgreSQL row locking and idempotency
 - immutable opening-balance ledger history with stored balance cache updates in the same transaction
 - health and readiness endpoints
 - PostgreSQL-backed automated tests
 
-QR scanning, normal/manual transaction flows, rewards UI, scheduled payments, password reset, and a production email provider are intentionally not implemented yet.
+QR scan execution, default Quick Action seeding, normal/manual transaction flows, rewards UI, scheduled payments, password reset, and a production email provider are intentionally not implemented yet.
 
 ## Local setup
 

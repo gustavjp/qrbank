@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block title %}Edit {{ action.action_code }} · QRBank{% endblock %}
+{% block content %}
+<p><a href="/classrooms/{{ classroom.id }}/actions">← Actions</a></p>
+<h1>Edit {{ action.action_code }}</h1>
+<p class="muted">Changing the code makes existing ACTION QR labels obsolete. Changes do not rewrite transaction history.</p>
+<form method="post" action="/classrooms/{{ classroom.id }}/actions/{{ action.id }}/edit">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+  <label>Code <input name="code" required maxlength="32" value="{{ action.action_code }}"></label>
+  <label>Name <input name="name" required value="{{ action.name }}"></label>
+  <label>Category
+    <select name="kind" required>
+      {% for kind in kinds %}<option value="{{ kind }}" {% if kind == action.action_kind %}selected{% endif %}>{{ kind }}</option>{% endfor %}
+    </select>
+  </label>
+  <label>Signed points <input type="number" name="amount" required value="{{ action.amount }}"></label>
+  <label>Description <input name="description" value="{{ action.description or '' }}"></label>
+  <button class="primary" type="submit">Save Action</button>
+</form>
+{% endblock %}
