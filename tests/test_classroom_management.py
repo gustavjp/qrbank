@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.main import app
+from app.models.audit import AdminAuditEvent
 from app.models.classroom import Classroom, ClassroomMembership, ClassroomSettings
 from app.services.auth import (
     create_email_verification_token,
@@ -251,6 +252,20 @@ def test_owner_can_update_classroom_settings_without_rewriting_balances(engine) 
         assert classroom_settings.allow_negative_balance is True
         assert classroom_settings.student_selection_timeout_seconds == 90
         assert classroom_settings.updated_by_user_id == owner_id
+
+        audit = db.scalar(
+            select(AdminAuditEvent).where(
+                AdminAuditEvent.classroom_id == classroom_id,
+                AdminAuditEvent.event_type == "classroom_settings_updated",
+            )
+        )
+        assert audit is not None
+        assert audit.actor_user_id == owner_id
+        assert audit.target_id == classroom_id
+        assert audit.before_json["name"] == "Before Update"
+        assert audit.after_json["name"] == "After Update"
+        assert audit.before_json["starting_balance"] == 0
+        assert audit.after_json["starting_balance"] == 75
 
 
 def test_tampered_active_classroom_cookie_does_not_grant_access(engine) -> None:
