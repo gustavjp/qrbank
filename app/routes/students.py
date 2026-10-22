@@ -5,7 +5,7 @@ import uuid
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request, status
 from fastapi.responses import RedirectResponse, StreamingResponse
-from sqlalchemy import text
+from sqlalchemy import select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -29,6 +29,8 @@ from app.services.financial import (
     post_transaction_reversal,
 )
 from app.services.roster_exports import iter_classroom_roster_csv
+from app.models.reward import Reward
+from app.models.reward_purchase import RewardPurchase
 from app.services.students import (
     STUDENT_MANAGER_ROLES,
     StudentNotFoundError,
@@ -269,6 +271,7 @@ def student_detail(
     adjusted: int = 0,
     reversed: int = 0,
     replayed: int = 0,
+    purchased: int = 0,
     db: Session = Depends(get_db),
 ):
     user = current_user_from_request(request, db)
@@ -279,7 +282,8 @@ def student_detail(
         request, db=db, user_id=user.id,
         classroom_id=classroom_id, enrollment_id=enrollment_id,
         saved=bool(saved), posted=bool(posted),
-        adjusted=bool(adjusted), reversed=bool(reversed), replayed=bool(replayed),
+        adjusted=bool(adjusted), reversed=bool(reversed),
+        replayed=bool(replayed), purchased=bool(purchased),
     )
 
 
@@ -287,7 +291,7 @@ def _detail_response(
     request: Request, *, db: Session, user_id: uuid.UUID,
     classroom_id: uuid.UUID, enrollment_id: uuid.UUID,
     saved: bool = False, posted: bool = False, adjusted: bool = False,
-    reversed: bool = False, replayed: bool = False,
+    reversed: bool = False, replayed: bool = False, purchased: bool = False,
     financial_error: str | None = None, status_code: int = 200,
 ):
     try:
@@ -302,6 +306,14 @@ def _detail_response(
     except (ClassroomNotFoundError, StudentNotFoundError):
         raise _not_found()
 
+    can_manage = record.access.membership.role in STUDENT_MANAGER_ROLES
+    available_rewards = list(db.scalars(select(Reward).where(
+        Reward.classroom_id == classroom_id, Reward.active.is_(True),
+    ).order_by(Reward.reward_code))) if can_manage and record.enrollment.active else []
+    reward_purchases = list(db.scalars(select(RewardPurchase).where(
+        RewardPurchase.classroom_id == classroom_id,
+        RewardPurchase.enrollment_id == enrollment_id,
+    ).order_by(RewardPurchase.purchased_at.desc(), RewardPurchase.id.desc())))
     return _form_response(
         request,
         template_name="student_detail.html",
@@ -311,10 +323,14 @@ def _detail_response(
             "student": record.student,
             "enrollment": record.enrollment,
             "transactions": transactions,
-            "can_manage": record.access.membership.role in STUDENT_MANAGER_ROLES,
+            "can_manage": can_manage,
             "saved": saved, "posted": posted,
             "adjusted": adjusted, "reversed": reversed,
-            "replayed": replayed, "financial_error": financial_error,
+            "replayed": replayed, "purchased": purchased,
+            "financial_error": financial_error,
+            "available_rewards": available_rewards,
+            "reward_purchases": reward_purchases,
+            "purchase_request_ids": {r.id: uuid.uuid4() for r in available_rewards},
             "manual_request_id": uuid.uuid4(),
             "adjustment_request_id": uuid.uuid4(),
             "reversal_request_ids": {tx.id: uuid.uuid4() for tx in transactions},

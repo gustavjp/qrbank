@@ -16,6 +16,10 @@ from app.models.classroom import ClassroomSettings
 from app.models.financial import FinancialRequest, FinancialTransaction
 from app.models.automation import ScheduledPayment
 from app.models.job import Job, JobAssignment
+from app.models.reward import Reward
+from app.models.reward_purchase import (
+    RewardFulfillmentEvent, RewardInventoryEvent, RewardPurchase,
+)
 from app.models.student import Enrollment
 from app.services.classrooms import ClassroomPermissionError, require_classroom_access
 from app.services.scanner import ScanValidationError, parse_scan_command
@@ -1110,4 +1114,214 @@ def post_weekly_allowance(
     db.flush()
     return ScheduledAllowanceResult(
         payment=payment, transaction=transaction, amount=amount, replayed=False,
+    )
+
+
+class RewardPurchaseNotFoundError(LookupError):
+    pass
+
+
+class RewardPurchaseValidationError(ValueError):
+    pass
+
+
+@dataclass(frozen=True)
+class RewardPurchaseResult:
+    purchase: RewardPurchase | None
+    transaction: FinancialTransaction | None
+    replayed: bool
+    rejection_code: str | None
+    balance_after: int
+
+
+def _reward_purchase_result(
+    db: Session, request: FinancialRequest, *, replayed: bool,
+) -> RewardPurchaseResult:
+    response = request.response_json
+    if response is None:
+        raise FinancialIntegrityError("reward purchase request is missing its result")
+    transaction_id = response.get("transaction_id")
+    purchase_id = response.get("purchase_id")
+    if request.status == "rejected":
+        if transaction_id is not None or purchase_id is not None or not request.rejection_code:
+            raise FinancialIntegrityError("rejected reward purchase has inconsistent result")
+        return RewardPurchaseResult(
+            purchase=None, transaction=None, replayed=replayed,
+            rejection_code=request.rejection_code,
+            balance_after=response["balance_after"],
+        )
+    if request.status != "completed" or not transaction_id or not purchase_id:
+        raise FinancialIntegrityError("completed reward purchase is missing ledger or purchase")
+    transaction = _existing_transaction_for_request(db, request_id=request.id)
+    purchase = db.get(RewardPurchase, uuid.UUID(purchase_id))
+    if (
+        str(transaction.id) != transaction_id
+        or transaction.classroom_id != request.classroom_id
+        or transaction.transaction_type != "reward_purchase"
+        or transaction.source != "reward_store"
+        or purchase is None
+        or purchase.purchase_transaction_id != transaction.id
+        or purchase.classroom_id != transaction.classroom_id
+        or purchase.enrollment_id != transaction.enrollment_id
+        or purchase.reward_id != transaction.reward_id
+        or purchase.price_snapshot != -transaction.amount
+        or response.get("balance_after") != transaction.balance_after
+    ):
+        raise FinancialIntegrityError("reward purchase ledger and purchase records disagree")
+    return RewardPurchaseResult(
+        purchase=purchase, transaction=transaction, replayed=replayed,
+        rejection_code=None, balance_after=transaction.balance_after,
+    )
+
+
+def post_reward_purchase(
+    db: Session,
+    *,
+    actor_user_id: uuid.UUID,
+    classroom_id: uuid.UUID,
+    enrollment_id: uuid.UUID,
+    reward_id: uuid.UUID,
+    expected_price: int,
+    request_id: uuid.UUID,
+    now: datetime | None = None,
+) -> RewardPurchaseResult:
+    """Buy one reward in the caller's transaction, using server-owned prices.
+
+    The same service is called by both the student page and classroom store.
+    All balance writers lock Enrollment first, then Reward for stock changes.
+    A completed or rejected request is immutable and idempotently replayed.
+    """
+    if type(expected_price) is not int or not 1 <= expected_price <= 2**31 - 1:
+        raise RewardPurchaseValidationError("expected price must be a positive whole number")
+    if type(request_id) is not uuid.UUID:
+        raise RewardPurchaseValidationError("request ID must be a UUID")
+    now = now or datetime.now(timezone.utc)
+    if now.tzinfo is None or now.utcoffset() is None:
+        raise RewardPurchaseValidationError("purchase clock must be timezone-aware")
+
+    access = require_classroom_access(
+        db, user_id=actor_user_id, classroom_id=classroom_id,
+    )
+    if access.membership.role not in {"owner", "teacher"}:
+        raise ClassroomPermissionError("owner or teacher permission is required")
+
+    request, replayed = _claim_request(
+        db, classroom_id=classroom_id, actor_user_id=actor_user_id,
+        idempotency_key=str(request_id), request_kind="reward_purchase",
+        request_fingerprint=_fingerprint([
+            "reward_purchase", str(classroom_id), str(actor_user_id),
+            str(enrollment_id), str(reward_id), str(expected_price),
+        ]),
+    )
+    if replayed:
+        if request.request_kind != "reward_purchase" or request.actor_user_id != actor_user_id:
+            raise FinancialIdempotencyConflictError("request ID belongs to another operation")
+        return _reward_purchase_result(db, request, replayed=True)
+
+    enrollment = db.scalar(select(Enrollment).where(
+        Enrollment.id == enrollment_id,
+        Enrollment.classroom_id == classroom_id,
+    ).with_for_update().execution_options(populate_existing=True))
+    if enrollment is None:
+        raise RewardPurchaseNotFoundError("student enrollment not found in classroom")
+    reward = db.scalar(select(Reward).where(
+        Reward.id == reward_id, Reward.classroom_id == classroom_id,
+    ).with_for_update().execution_options(populate_existing=True))
+    if reward is None:
+        raise RewardPurchaseNotFoundError("reward not found in classroom")
+
+    before = enrollment.current_balance
+
+    def reject(code: str) -> RewardPurchaseResult:
+        request.status = "rejected"
+        request.rejection_code = code
+        request.response_json = {
+            "transaction_id": None, "purchase_id": None,
+            "balance_after": before,
+        }
+        db.flush()
+        return _reward_purchase_result(db, request, replayed=False)
+
+    if not enrollment.active:
+        return reject("inactive_student")
+    if not reward.active:
+        return reject("inactive_reward")
+    if reward.available_from is not None and now < reward.available_from:
+        return reject("not_yet_available")
+    if reward.available_until is not None and now >= reward.available_until:
+        return reject("no_longer_available")
+
+    price = reward.price_points
+    if type(price) is not int or not 1 <= price <= 2**31 - 1:
+        raise FinancialIntegrityError("reward has an invalid integer price")
+    if price != expected_price:
+        return reject("price_changed")
+    if reward.inventory_tracking and (
+        reward.quantity_available is None or reward.quantity_available < 1
+    ):
+        return reject("out_of_stock")
+
+    # Purchases require sufficient points regardless of the classroom's
+    # separate allow-negative-balance setting for other transactions.
+    if before < price:
+        return reject("insufficient_balance")
+    after = before - price
+    if not -(2**31) <= after <= 2**31 - 1:
+        raise FinancialIntegrityError("purchase balance exceeds supported integer range")
+
+    transaction = FinancialTransaction(
+        id=uuid.uuid4(), classroom_id=classroom_id,
+        enrollment_id=enrollment.id, financial_request_id=request.id,
+        transaction_type="reward_purchase", source="reward_store",
+        amount=-price, balance_before=before, balance_after=after,
+        actor_user_id=actor_user_id,
+        note=f"Reward purchase: {reward.name}",
+        reward_id=reward.id, reward_code_snapshot=reward.reward_code,
+        reward_name_snapshot=reward.name, reward_price_snapshot=price,
+        student_code_snapshot=enrollment.student_code,
+    )
+    db.add(transaction)
+    enrollment.current_balance = after
+    db.flush()
+
+    purchase = RewardPurchase(
+        id=uuid.uuid4(), classroom_id=classroom_id,
+        enrollment_id=enrollment.id, reward_id=reward.id,
+        purchase_transaction_id=transaction.id,
+        reward_code_snapshot=reward.reward_code,
+        reward_name_snapshot=reward.name,
+        reward_type_snapshot=reward.reward_type,
+        price_snapshot=price, fulfillment_status="unused",
+        purchased_by_user_id=actor_user_id,
+    )
+    db.add(purchase)
+    db.flush()
+    db.add(RewardFulfillmentEvent(
+        id=uuid.uuid4(), reward_purchase_id=purchase.id,
+        from_status=None, to_status="unused", actor_user_id=actor_user_id,
+    ))
+
+    if reward.inventory_tracking:
+        quantity_before = reward.quantity_available
+        quantity_after = quantity_before - 1
+        reward.quantity_available = quantity_after
+        reward.updated_at = datetime.now(timezone.utc)
+        db.add(RewardInventoryEvent(
+            id=uuid.uuid4(), classroom_id=classroom_id,
+            reward_id=reward.id, reward_purchase_id=purchase.id,
+            financial_transaction_id=transaction.id,
+            event_type="purchase_decrement", delta=-1,
+            quantity_before=quantity_before, quantity_after=quantity_after,
+            actor_user_id=actor_user_id,
+        ))
+
+    request.response_json = {
+        "transaction_id": str(transaction.id),
+        "purchase_id": str(purchase.id),
+        "balance_after": after,
+    }
+    db.flush()
+    return RewardPurchaseResult(
+        purchase=purchase, transaction=transaction, replayed=False,
+        rejection_code=None, balance_after=after,
     )

@@ -3,7 +3,9 @@
 {% block content %}
 <p><a href="/classrooms/{{ classroom.id }}">← {{ classroom.name }}</a></p>
 <h1>Classroom Rewards</h1>
-<p class="muted">Define classroom rewards and their point prices. Configuring a reward does not deduct points or create a purchase. Checkout, inventory management, and images will be added separately.</p>
+<p class="muted">Configure classroom rewards and their point prices, then purchase them for active students. Purchases deduct points and create permanent financial and purchase records. Inventory setup and images will be added separately.</p>
+{% if purchased %}<p class="success">Reward purchased and recorded in the ledger.</p>{% endif %}
+{% if replayed %}<p class="success">This purchase was already processed; no duplicate charge occurred.</p>{% endif %}
 
 <h2>Rewards</h2>
 {% if rewards %}
@@ -11,7 +13,27 @@
   <div style="border-bottom:1px solid #dfe5ec; padding:.6rem 0;">
     <strong>{{ reward.reward_code }} — {{ reward.name }}</strong>
     <div>{{ reward.price_points }} points · {{ reward.reward_type|title }} · {{ "Active" if reward.active else "Inactive" }}</div>
+    {% if reward.inventory_tracking %}<div>Stock: {{ reward.quantity_available }}</div>{% endif %}
     {% if reward.description %}<p class="muted">{{ reward.description }}</p>{% endif %}
+    {% if can_manage and reward.active and enrollments %}
+      {% if reward.inventory_tracking and reward.quantity_available < 1 %}
+        <p class="muted">Out of stock</p>
+      {% else %}
+        <form method="post" action="/classrooms/{{ classroom.id }}/rewards/{{ reward.id }}/purchase">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <input type="hidden" name="request_id" value="{{ purchase_request_ids[reward.id] }}">
+          <input type="hidden" name="expected_price" value="{{ reward.price_points }}">
+          <label>Purchase for student
+            <select name="enrollment_id" required>
+              {% for enrollment in enrollments %}
+                <option value="{{ enrollment.id }}">{{ enrollment.student_code }}</option>
+              {% endfor %}
+            </select>
+          </label>
+          <button class="secondary" type="submit">Purchase for {{ reward.price_points }} points</button>
+        </form>
+      {% endif %}
+    {% endif %}
     {% if can_manage %}
       <a href="/classrooms/{{ classroom.id }}/rewards/{{ reward.id }}/edit">Edit</a>
       <form style="display:inline" method="post" action="/classrooms/{{ classroom.id }}/rewards/{{ reward.id }}/active">

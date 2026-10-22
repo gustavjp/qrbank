@@ -68,4 +68,8 @@ class FinancialTransaction(Base):
     job_code_snapshot: Mapped[str | None] = mapped_column(Text, nullable=True)
     job_name_snapshot: Mapped[str | None] = mapped_column(Text, nullable=True)
     job_wage_snapshot: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    reward_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    reward_code_snapshot: Mapped[str | None] = mapped_column(Text, nullable=True)
+    reward_name_snapshot: Mapped[str | None] = mapped_column(Text, nullable=True)
+    reward_price_snapshot: Mapped[int | None] = mapped_column(Integer, nullable=True)
     adjustment_target_balance: Mapped[int | None] = mapped_column(Integer, nullable=True)

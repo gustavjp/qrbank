@@ -39,18 +39,20 @@ The current application includes:
 - classroom-scoped job definitions with audited create/edit/deactivate/reactivate and nonnegative weekly wages
 - classroom-scoped student job assignments with duplicate-active prevention, end dates, and durable audit history
 - classroom-scoped rewards catalog with positive integer prices, reward types, active/inactive status, and audited create/edit/status changes
+- classroom reward purchasing from the student detail page or classroom Rewards page, through one central financial service
+- idempotent purchase requests, immutable reward/price snapshots, fulfillment history, and optional stock decrement audit events
 - classroom-configured positive/negative behavior reasons and audited post-scan reason/detail attachment, without financial ledger mutation
 - classroom-wide read-only ledger browsing with tenant-bound student/type/source/category/local-date filters and stable keyset pagination
 - authorized streaming CSV export of all filtered posted ledger entries, with immutable identifiers, numeric balances, local/UTC timestamps, and spreadsheet formula safeguards
 - authorized classroom roster/balance CSV export with active/all selection, integer balances, enrollment status and dates, and spreadsheet formula safeguards
 - audited set-balance adjustments (server-computed difference) and append-only transaction reversals
 - exact inverse reversals, reversal-of-reversal support, and duplicate undo protection
-- central opening-balance, QR Action, manual, weekly wage, and weekly allowance financial posting services with PostgreSQL row locking and idempotency
+- central opening-balance, QR Action, manual, weekly wage, weekly allowance, and reward purchase financial posting services with PostgreSQL row locking and idempotency
 - append-oriented balance-changing ledger history with stored balance cache updates in the same transaction
 - health and readiness endpoints
 - PostgreSQL-backed automated tests
 
-Weekly job wages and student allowances have external scheduler commands, but no scheduler is provisioned or enabled automatically. Reward purchasing, inventory adjustments, reward images, mobile camera integration, password reset, and a production email provider are not implemented yet. Scan Mode can post QR Action/Quick Action transactions to the ledger.
+Weekly job wages and student allowances have external scheduler commands, but no scheduler is provisioned or enabled automatically. Inventory setup/adjustments, reward redemption/refunds, reward images, mobile camera integration, password reset, and a production email provider are not implemented yet. Scan Mode can post QR Action/Quick Action transactions to the ledger.
 
 ## Local setup
 
@@ -148,11 +150,30 @@ All meaningful changes create before/after administrative audit entries.
 Duplicate reward codes are rejected within a classroom but may be reused
 by an unrelated classroom.
 
-Catalog operations only update reward definitions and audit events. They
-never deduct balances, create FinancialRequests, or post financial ledger
-transactions. Purchasing and redemption, optional inventory, availability
-dates, and image uploads are separate milestones; a reward cannot be purchased
-through these catalog pages yet.
+Catalog creation/edit/status operations only update reward definitions and
+audit events; they do not change student balances. Owners and teachers can
+purchase an active reward for an active enrolled student either on that
+student's detail page or from the classroom's Rewards page. Both forms use
+the same centrally controlled financial purchase service. Assistants cannot
+purchase.
+
+The server validates the displayed price against the current price before
+charging, checks availability and current stock, and requires sufficient
+points even when the classroom allows negative balances for other operations.
+Within one PostgreSQL transaction it locks the student balance and reward,
+posts a negative integer reward_purchase ledger entry and updated cached
+balance, creates a reward purchase with the reward's code/name/type/price
+snapshots, and records an initial `unused` fulfillment event. If inventory
+tracking is enabled, it also decrements one unit and appends an auditable
+inventory event. Duplicate request IDs replay the original result; reusing
+an ID with different purchase inputs is rejected. Rejected attempts do not
+deduct money or create a purchase, and keep an idempotent rejection record.
+
+The catalog interface does not yet offer inventory configuration, fulfillment,
+redemption, refunds, availability scheduling, or image uploads. Those are
+separate milestones. Reward purchases are deliberately excluded from generic
+transaction reversal until a coordinated refund/stock restoration workflow
+is implemented.
 
 ## Classroom jobs
 

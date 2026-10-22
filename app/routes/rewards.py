@@ -5,6 +5,7 @@ from collections.abc import Callable
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request, status
 from fastapi.responses import RedirectResponse
+from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -16,6 +17,7 @@ from app.services.rewards import (
     MANAGER_ROLES, RewardNotFoundError, RewardValidationError,
     create_reward, get_reward, list_rewards, set_reward_active, update_reward,
 )
+from app.models.student import Enrollment
 from app.web import templates
 
 
@@ -65,17 +67,27 @@ def _submit(
 
 @router.get("")
 def reward_catalog(
-    classroom_id: uuid.UUID, request: Request, db: Session = Depends(get_db),
+    classroom_id: uuid.UUID, request: Request,
+    purchased: int = 0, replayed: int = 0,
+    db: Session = Depends(get_db),
 ):
     user = _user(request, db)
     try:
         catalog = list_rewards(db, user_id=user.id, classroom_id=classroom_id)
     except ClassroomNotFoundError:
         raise HTTPException(status_code=404, detail="classroom not found")
+    can_manage = catalog.access.membership.role in MANAGER_ROLES
+    enrollments = list(db.scalars(select(Enrollment).where(
+        Enrollment.classroom_id == classroom_id,
+        Enrollment.active.is_(True),
+    ).order_by(Enrollment.student_code))) if can_manage else []
     return _page(request, "reward_catalog.html", {
         "classroom": catalog.access.classroom,
         "rewards": catalog.rewards,
-        "can_manage": catalog.access.membership.role in MANAGER_ROLES,
+        "can_manage": can_manage,
+        "enrollments": enrollments,
+        "purchase_request_ids": {r.id: uuid.uuid4() for r in catalog.rewards},
+        "purchased": bool(purchased), "replayed": bool(replayed),
     })
 
 
