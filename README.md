@@ -41,18 +41,19 @@ The current application includes:
 - classroom-scoped rewards catalog with positive integer prices, reward types, active/inactive status, and audited create/edit/status changes
 - classroom reward purchasing from the student detail page or classroom Rewards page, through one central financial service
 - idempotent purchase requests, immutable reward/price snapshots, fulfillment history, and optional stock decrement audit events
+- coordinated reward refunds with exact linked reversal credits, cancelled purchase state, and atomic stock restoration when the original purchase consumed inventory
 - classroom-configured positive/negative behavior reasons and audited post-scan reason/detail attachment, without financial ledger mutation
 - classroom-wide read-only ledger browsing with tenant-bound student/type/source/category/local-date filters and stable keyset pagination
 - authorized streaming CSV export of all filtered posted ledger entries, with immutable identifiers, numeric balances, local/UTC timestamps, and spreadsheet formula safeguards
 - authorized classroom roster/balance CSV export with active/all selection, integer balances, enrollment status and dates, and spreadsheet formula safeguards
 - audited set-balance adjustments (server-computed difference) and append-only transaction reversals
 - exact inverse reversals, reversal-of-reversal support, and duplicate undo protection
-- central opening-balance, QR Action, manual, weekly wage, weekly allowance, and reward purchase financial posting services with PostgreSQL row locking and idempotency
+- central opening-balance, QR Action, manual, weekly wage, weekly allowance, reward purchase, and reward refund financial posting services with PostgreSQL row locking and idempotency
 - append-oriented balance-changing ledger history with stored balance cache updates in the same transaction
 - health and readiness endpoints
 - PostgreSQL-backed automated tests
 
-Weekly job wages and student allowances have external scheduler commands, but no scheduler is provisioned or enabled automatically. Inventory setup/adjustments, reward redemption/refunds, reward images, mobile camera integration, password reset, and a production email provider are not implemented yet. Scan Mode can post QR Action/Quick Action transactions to the ledger.
+Weekly job wages and student allowances have external scheduler commands, but no scheduler is provisioned or enabled automatically. Inventory setup/adjustments, reward redemption, refund undo, reward images, mobile camera integration, password reset, and a production email provider are not implemented yet. Scan Mode can post QR Action/Quick Action transactions to the ledger.
 
 ## Local setup
 
@@ -169,11 +170,22 @@ inventory event. Duplicate request IDs replay the original result; reusing
 an ID with different purchase inputs is rejected. Rejected attempts do not
 deduct money or create a purchase, and keep an idempotent rejection record.
 
-The catalog interface does not yet offer inventory configuration, fulfillment,
-redemption, refunds, availability scheduling, or image uploads. Those are
-separate milestones. Reward purchases are deliberately excluded from generic
-transaction reversal until a coordinated refund/stock restoration workflow
-is implemented.
+Student detail pages show historical purchases and their fulfillment status.
+For an unused purchase, owners and teachers can supply a refund reason and
+apply a coordinated refund. The service appends an exact positive `reversal`
+ledger entry linked to the original purchase transaction, updates the cached
+student balance, marks the purchase `cancelled`, and appends a fulfillment
+event. A refund restores one inventory unit *only when the original purchase
+recorded a stock decrement*, with its own inventory event. Duplicate refund
+requests replay the same result, while distinct attempts cannot refund the
+same purchase twice. Inactive students and inactive/renamed rewards may still
+be refunded using immutable purchase snapshots.
+
+Redeemed or already-cancelled purchases are not eligible for this workflow.
+Generic reversals of reward purchases, and generic undo of reward refund
+reversals, remain blocked because they would desynchronize purchase and
+inventory state. Inventory configuration/adjustments, redemption, undoing
+a refund, availability scheduling, and image uploads are separate milestones.
 
 ## Classroom jobs
 
