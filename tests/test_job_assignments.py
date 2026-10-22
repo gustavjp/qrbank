@@ -140,7 +140,9 @@ def test_students_can_hold_multiple_jobs_with_classroom_scoped_history_and_no_mo
     assert "01" in page.text and "02" in page.text
     filtered = client.get(f"/classrooms/{classroom_id}/job-assignments?enrollment_id={student_a}")
     assert filtered.status_code == 200
-    assert "Student 01" in filtered.text and "Student 02" not in filtered.text
+    history_html = filtered.text.split("<h2>Assignments and history</h2>", 1)[1]
+    assert "Student 01" in history_html and "Student 02" not in history_html
+    assert history_html.count("End assignment") == 2
     assert f"enrollment_id={student_a}" in client.get(
         f"/classrooms/{classroom_id}/students/{student_a}"
     ).text
