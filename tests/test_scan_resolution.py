@@ -146,7 +146,7 @@ def test_scan_selects_active_student_then_previews_shortcut_without_posting(engi
 
     page = client.get(f"/classrooms/{classroom_id}/scan")
     assert page.status_code == 200
-    assert "Preview-only milestone" in page.text
+    assert "Scan Mode" in page.text
     assert _scan(client, classroom_id, "QUICK:QA1").status_code == 400
 
     selected = _scan(client, classroom_id, "student:01")

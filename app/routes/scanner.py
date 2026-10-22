@@ -4,14 +4,23 @@ import uuid
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request, status
 from fastapi.responses import RedirectResponse
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.auth_context import current_user_from_request
 from app.config import settings
 from app.csrf import csrf_token_for_request, set_csrf_cookie, validate_csrf
 from app.database import get_db
-from app.services.classrooms import ClassroomNotFoundError, require_classroom_access
-from app.services.scanner import ScanValidationError, resolve_scan
+from app.models.classroom import ClassroomSettings
+from app.models.financial import FinancialRequest
+from app.models.student import Enrollment
+from app.services.classrooms import (
+    ClassroomNotFoundError, ClassroomPermissionError, require_classroom_access,
+)
+from app.services.financial import (
+    FinancialIdempotencyConflictError, ScanPostingResult, post_scanned_action,
+)
+from app.services.scanner import ScanValidationError, parse_scan_command, resolve_scan
 from app.web import templates
 
 
@@ -36,18 +45,31 @@ def _context(request: Request, db: Session, classroom_id: uuid.UUID):
     return user, access
 
 
-def _page(request: Request, *, classroom, selected=None, result=None, error=None, status_code=200):
+def _page(
+    request: Request, *, classroom, selected=None, result=None,
+    outcome: ScanPostingResult | None = None, confirmation=None,
+    error=None, status_code=200,
+):
     token = csrf_token_for_request(request)
     response = templates.TemplateResponse(
         request=request, name="scan_mode.html",
         context={
             "csrf_token": token, "classroom": classroom,
-            "selected": selected, "result": result, "error": error,
+            "selected": selected, "result": result, "outcome": outcome,
+            "confirmation": confirmation, "error": error,
+            "request_id": uuid.uuid4(),
         },
         status_code=status_code,
     )
     set_csrf_cookie(response, token)
     return response
+
+
+def _selected_uuid(raw: str | None) -> uuid.UUID | None:
+    try:
+        return uuid.UUID(raw) if raw else None
+    except ValueError as exc:
+        raise ScanValidationError("selected student identifier is invalid") from exc
 
 
 @router.get("")
@@ -66,20 +88,146 @@ def scan_preview(
     payload: str = Form(...), selected_enrollment_id: str | None = Form(None),
     csrf_token: str = Form(...), db: Session = Depends(get_db),
 ):
+    """Retain an explicitly read-only resolution endpoint for previews."""
     validate_csrf(request, csrf_token)
     user, access = _context(request, db, classroom_id)
     if user is None:
         return RedirectResponse("/auth/login", status_code=status.HTTP_303_SEE_OTHER)
-
     try:
-        selected_id = uuid.UUID(selected_enrollment_id) if selected_enrollment_id else None
         _, result = resolve_scan(
             db, user_id=user.id, classroom_id=classroom_id,
-            payload=payload, selected_enrollment_id=selected_id,
+            payload=payload, selected_enrollment_id=_selected_uuid(selected_enrollment_id),
         )
-    except (ScanValidationError, ValueError) as exc:
-        # No guessed or forged student identifier is carried forward on failure.
-        return _page(request, classroom=access.classroom, error=str(exc),
-                     status_code=400)
+    except ScanValidationError as exc:
+        return _page(request, classroom=access.classroom, error=str(exc), status_code=400)
     return _page(request, classroom=access.classroom,
                  selected=result.enrollment, result=result)
+
+
+def _post_action(
+    *, db: Session, request: Request, classroom_id: uuid.UUID,
+    access, user_id: uuid.UUID, payload: str, enrollment_id: uuid.UUID,
+    request_id: uuid.UUID, expected_action_id: uuid.UUID | None = None,
+    expected_quick_action_id: uuid.UUID | None = None,
+    expected_amount: int | None = None,
+):
+    try:
+        outcome = post_scanned_action(
+            db, actor_user_id=user_id, classroom_id=classroom_id,
+            enrollment_id=enrollment_id, payload=payload, request_id=request_id,
+            expected_action_id=expected_action_id,
+            expected_quick_action_id=expected_quick_action_id,
+            expected_amount=expected_amount,
+        )
+        db.commit()
+    except ClassroomNotFoundError:
+        db.rollback()
+        raise HTTPException(status_code=404, detail="classroom not found")
+    except ClassroomPermissionError:
+        db.rollback()
+        raise HTTPException(status_code=403, detail="permission denied")
+    except FinancialIdempotencyConflictError:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="request ID reused for another scan")
+    except ScanValidationError as exc:
+        db.rollback()
+        return _page(request, classroom=access.classroom, error=str(exc), status_code=400)
+    except Exception:
+        db.rollback()
+        raise
+    selected = db.get(Enrollment, enrollment_id)
+    return _page(
+        request, classroom=access.classroom, selected=selected, outcome=outcome,
+        status_code=422 if outcome.rejection_code else 200,
+    )
+
+
+@router.post("/execute")
+def scan_execute(
+    classroom_id: uuid.UUID, request: Request,
+    payload: str = Form(...), selected_enrollment_id: str | None = Form(None),
+    request_id: uuid.UUID = Form(...), csrf_token: str = Form(...),
+    db: Session = Depends(get_db),
+):
+    validate_csrf(request, csrf_token)
+    user, access = _context(request, db, classroom_id)
+    if user is None:
+        return RedirectResponse("/auth/login", status_code=status.HTTP_303_SEE_OTHER)
+    try:
+        command, _ = parse_scan_command(payload)
+        selected_id = _selected_uuid(selected_enrollment_id)
+    except ScanValidationError as exc:
+        return _page(request, classroom=access.classroom, error=str(exc), status_code=400)
+
+    if command == "STUDENT":
+        try:
+            _, result = resolve_scan(
+                db, user_id=user.id, classroom_id=classroom_id,
+                payload=payload, selected_enrollment_id=selected_id,
+            )
+        except ScanValidationError as exc:
+            return _page(request, classroom=access.classroom,
+                         error=str(exc), status_code=400)
+        return _page(request, classroom=access.classroom,
+                     selected=result.enrollment, result=result)
+
+    if selected_id is None:
+        return _page(request, classroom=access.classroom,
+                     error="scan a student before scanning a Quick Action or Action",
+                     status_code=400)
+
+    # Previously committed requests must replay even if an action was later
+    # renamed, disabled, or remapped. The service checks its exact fingerprint.
+    previous = db.scalar(select(FinancialRequest.id).where(
+        FinancialRequest.classroom_id == classroom_id,
+        FinancialRequest.idempotency_key == str(request_id),
+    ))
+    classroom_settings = db.get(ClassroomSettings, classroom_id)
+    if classroom_settings is None:
+        raise HTTPException(status_code=404, detail="classroom settings not found")
+    if previous is None and classroom_settings.confirm_normal_transactions:
+        try:
+            _, result = resolve_scan(
+                db, user_id=user.id, classroom_id=classroom_id,
+                payload=payload, selected_enrollment_id=selected_id,
+            )
+        except ScanValidationError as exc:
+            return _page(request, classroom=access.classroom, error=str(exc), status_code=400)
+        if result.action.action_kind == "general":
+            return _page(
+                request, classroom=access.classroom, selected=result.enrollment,
+                result=result, confirmation={
+                    "payload": payload,
+                    "request_id": request_id,
+                    "action_id": result.action.id,
+                    "quick_id": result.quick_action.id if result.quick_action else None,
+                    "amount": result.action.amount,
+                },
+            )
+    return _post_action(
+        db=db, request=request, classroom_id=classroom_id, access=access,
+        user_id=user.id, payload=payload, enrollment_id=selected_id,
+        request_id=request_id,
+    )
+
+
+@router.post("/confirm")
+def scan_confirm(
+    classroom_id: uuid.UUID, request: Request,
+    payload: str = Form(...), selected_enrollment_id: uuid.UUID = Form(...),
+    request_id: uuid.UUID = Form(...), expected_action_id: uuid.UUID = Form(...),
+    expected_quick_action_id: uuid.UUID | None = Form(None),
+    expected_amount: int = Form(...), csrf_token: str = Form(...),
+    db: Session = Depends(get_db),
+):
+    validate_csrf(request, csrf_token)
+    user, access = _context(request, db, classroom_id)
+    if user is None:
+        return RedirectResponse("/auth/login", status_code=status.HTTP_303_SEE_OTHER)
+    return _post_action(
+        db=db, request=request, classroom_id=classroom_id, access=access,
+        user_id=user.id, payload=payload, enrollment_id=selected_enrollment_id,
+        request_id=request_id, expected_action_id=expected_action_id,
+        expected_quick_action_id=expected_quick_action_id,
+        expected_amount=expected_amount,
+    )

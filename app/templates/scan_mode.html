@@ -4,34 +4,75 @@
 <p><a href="/classrooms/{{ classroom.id }}">← {{ classroom.name }}</a></p>
 <h1>Scan Mode</h1>
 <p class="success"><strong>Active classroom: {{ classroom.name }}</strong> ({{ classroom.school_year }})</p>
-<p class="error"><strong>Preview-only milestone.</strong> Quick Action and Action scans show the configured operation but do not post points or transactions.</p>
-
 {% if selected %}
   <p><strong>Student {{ selected.student_code }}</strong> selected · Balance {{ selected.current_balance }}</p>
 {% else %}
   <p class="muted">No student selected. Scan STUDENT:01 first.</p>
 {% endif %}
-{% if error %}<p class="error">{{ error }}</p>{% endif %}
-{% if result and result.action %}
+{% if error %}<p class="error" role="alert">{{ error }}</p>{% endif %}
+{% if outcome %}
+  {% if outcome.rejection_code %}
+    <p class="error" role="alert">
+      {% if outcome.rejection_code == "insufficient_balance" %}
+        Insufficient balance. No points were deducted.
+      {% elif outcome.rejection_code == "duplicate_scan" %}
+        Duplicate scan suppressed. No additional points changed.
+      {% elif outcome.rejection_code == "configuration_changed" %}
+        The action changed since confirmation. Scan again to review the current action.
+      {% else %}
+        Transaction rejected ({{ outcome.rejection_code }}). No points changed.
+      {% endif %}
+    </p>
+  {% elif outcome.replayed %}
+    <p class="success" role="status">Previously processed request: {{ outcome.action_name }}
+      ({{ "+" if outcome.amount > 0 else "" }}{{ outcome.amount }} points).
+      Current balance after that request: {{ outcome.balance_after }}. No duplicate posting.</p>
+  {% elif outcome.transaction %}
+    <p class="success" role="status">TRANSACTION COMPLETED: {{ outcome.action_name }}
+      ({{ "+" if outcome.amount > 0 else "" }}{{ outcome.amount }} points).
+      New balance: {{ outcome.balance_after }}. #{{ outcome.transaction.display_number }}</p>
+  {% else %}
+    <p class="success" role="status">Action recorded: {{ outcome.action_name }} (0 points). No balance change.</p>
+  {% endif %}
+{% elif result and result.action and not confirmation %}
   <p class="success">Resolved {{ result.command }}:{{ result.code }} → {{ result.action.name }}
     ({{ "+" if result.action.amount > 0 else "" }}{{ result.action.amount }} points).
     <strong>No balance change was made.</strong>
   </p>
-{% elif result %}
-  <p class="success">Student {{ result.enrollment.student_code }} selected.</p>
+{% elif result and result.command == "STUDENT" %}
+  <p class="success" role="status">Student {{ result.enrollment.student_code }} selected.</p>
 {% endif %}
 
-<form id="scan-form" method="post" action="/classrooms/{{ classroom.id }}/scan/resolve">
-  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-  <input type="hidden" name="selected_enrollment_id" value="{{ selected.id if selected else '' }}">
-  <label>Scanner input
-    <input id="scanner-input" name="payload" required autocomplete="off"
-           autofocus placeholder="STUDENT:01, QUICK:QA1, or ACTION:A01">
-  </label>
-  <p class="muted">USB scanners that type the QR payload and press Enter can use this input directly. Click the field to resume scanner entry.</p>
-  <button class="primary" id="scan-submit" type="submit">Resolve scan</button>
-</form>
-<p id="scanner-status" class="muted" role="status">READY</p>
+{% if confirmation %}
+  <p class="muted">Confirm this transaction before posting points:</p>
+  <p><strong>{{ result.action.name }}</strong>
+    ({{ "+" if result.action.amount > 0 else "" }}{{ result.action.amount }} points)
+    for Student {{ selected.student_code }}.</p>
+  <form id="scan-form" method="post" action="/classrooms/{{ classroom.id }}/scan/confirm">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <input type="hidden" name="request_id" value="{{ confirmation.request_id }}">
+    <input type="hidden" name="payload" value="{{ confirmation.payload }}">
+    <input type="hidden" name="selected_enrollment_id" value="{{ selected.id }}">
+    <input type="hidden" name="expected_action_id" value="{{ confirmation.action_id }}">
+    <input type="hidden" name="expected_quick_action_id" value="{{ confirmation.quick_id or '' }}">
+    <input type="hidden" name="expected_amount" value="{{ confirmation.amount }}">
+    <button class="primary" id="scan-submit" type="submit">Confirm and post</button>
+  </form>
+  <p><a href="/classrooms/{{ classroom.id }}/scan">Cancel, no points posted</a></p>
+{% else %}
+  <form id="scan-form" method="post" action="/classrooms/{{ classroom.id }}/scan/execute">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <input type="hidden" name="request_id" value="{{ request_id }}">
+    <input type="hidden" name="selected_enrollment_id" value="{{ selected.id if selected else '' }}">
+    <label>Scanner input
+      <input id="scanner-input" name="payload" required autocomplete="off"
+             autofocus placeholder="STUDENT:01, QUICK:QA1, or ACTION:A01">
+    </label>
+    <p class="muted">USB scanners can type the QR payload and press Enter. After each result, the input is ready for another scan.</p>
+    <button class="primary" id="scan-submit" type="submit">Process scan</button>
+  </form>
+{% endif %}
+<p id="scanner-status" class="muted" role="status">READY TO SCAN</p>
 <script>
   const form = document.getElementById("scan-form");
   form.addEventListener("submit", function () {
