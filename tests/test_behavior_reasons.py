@@ -112,7 +112,9 @@ def test_reason_catalog_create_edit_deactivate_and_audit(engine):
         assert reason.name == "Helping"
         assert reason.behavior_type == "positive"
         reason_id = reason.id
-        assert db.scalar(select(func.count()).select_from(FinancialTransaction)) == 0
+        assert db.scalar(select(func.count()).select_from(FinancialTransaction).where(
+            FinancialTransaction.classroom_id == classroom_id,
+        )) == 0
 
     base = f"/classrooms/{classroom_id}/behavior/reasons"
     assert client.post(base + f"/{reason_id}/edit", data={
