@@ -6,10 +6,28 @@
 <p><strong>Classroom: {{ classroom.name }}</strong> ({{ classroom.school_year }})</p>
 <p class="muted">These codes work only in the selected classroom. Label printed student cards with the classroom name. SVG is ideal for printing; PNG works for images and documents. Inactive items are excluded.</p>
 
+<h2>Printable QR Sheets and Cards</h2>
+<form method="post" action="/classrooms/{{ classroom.id }}/qr/print.pdf">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+  <p><label for="qr-layout">Layout</label>
+    <select id="qr-layout" name="layout" required>
+      <option value="student_cards">Student Cards</option>
+      <option value="quick_action_cards">Quick Action Cards</option>
+      <option value="qr_only">QR Only (students, Quick Actions, and Actions)</option>
+    </select>
+    <label for="qr-paper">Paper</label>
+    <select id="qr-paper" name="paper" required>
+      <option value="letter">US Letter</option>
+      <option value="a4">A4</option>
+    </select>
+  </p>
+  <p class="muted">Choose items below and select Print Selected, or select Print All for the chosen layout. Student Cards only uses student selections; Quick Action Cards only uses Quick Action selections. Printable packs include the classroom name on every card. Up to 120 codes per PDF.</p>
+
 <h2>Active Students</h2>
 {% if students %}
   {% for student in students %}
     <div class="card">
+      <label><input type="checkbox" name="student_ids" value="{{ student.id }}"> Select for PDF</label>
       <p><strong>Student {{ student.student_code }}</strong> · <code>STUDENT:{{ student.student_code }}</code></p>
       <img src="/classrooms/{{ classroom.id }}/qr/student/{{ student.id }}/svg" width="128" height="128" alt="Student {{ student.student_code }} QR code">
       <p><a href="/classrooms/{{ classroom.id }}/qr/student/{{ student.id }}/svg?download=true">Download SVG</a>
@@ -22,6 +40,7 @@
 {% if quick_actions %}
   {% for quick, action in quick_actions %}
     <div class="card">
+      <label><input type="checkbox" name="quick_ids" value="{{ quick.id }}"> Select for PDF</label>
       <p><strong>{{ quick.quick_action_code }} — {{ action.name }}</strong> · <code>QUICK:{{ quick.quick_action_code }}</code></p>
       <img src="/classrooms/{{ classroom.id }}/qr/quick/{{ quick.id }}/svg" width="128" height="128" alt="Quick Action {{ quick.quick_action_code }} QR code">
       <p><a href="/classrooms/{{ classroom.id }}/qr/quick/{{ quick.id }}/svg?download=true">Download SVG</a>
@@ -34,6 +53,7 @@
 {% if actions %}
   {% for action in actions %}
     <div class="card">
+      <label><input type="checkbox" name="action_ids" value="{{ action.id }}"> Select for PDF</label>
       <p><strong>{{ action.action_code }} — {{ action.name }}</strong> · <code>ACTION:{{ action.action_code }}</code></p>
       <img src="/classrooms/{{ classroom.id }}/qr/action/{{ action.id }}/svg" width="128" height="128" alt="Action {{ action.action_code }} QR code">
       <p><a href="/classrooms/{{ classroom.id }}/qr/action/{{ action.id }}/svg?download=true">Download SVG</a>
@@ -41,4 +61,7 @@
     </div>
   {% endfor %}
 {% else %}<p>No active Actions.</p>{% endif %}
+<p><button type="submit" name="selection" value="selected">Print Selected (PDF)</button>
+  <button type="submit" name="selection" value="all">Print All for Layout (PDF)</button></p>
+</form>
 {% endblock %}
