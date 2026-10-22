@@ -192,6 +192,7 @@ def classroom_detail(
 def classroom_settings_page(
     classroom_id: uuid.UUID,
     request: Request,
+    saved: int = 0,
     db: Session = Depends(get_db),
 ):
     user = current_user_from_request(request, db)
@@ -215,6 +216,7 @@ def classroom_settings_page(
             "classroom": access.classroom,
             "settings": classroom_settings,
             "can_edit": access.membership.role == "owner",
+            "saved": bool(saved),
         },
     )
 
