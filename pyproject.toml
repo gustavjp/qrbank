@@ -15,6 +15,7 @@ dependencies = [
   "SQLAlchemy>=2.0,<3",
   "psycopg[binary]>=3.2,<4",
   "segno>=1.6,<2",
+  "reportlab>=4,<5",
   "python-multipart>=0.0.20,<1",
   "uvicorn[standard]>=0.30,<1",
 ]
@@ -23,6 +24,7 @@ dependencies = [
 dev = [
   "httpx>=0.28,<1",
   "pytest>=8,<10",
+  "pypdf>=5,<7",
 ]
 
 [tool.pytest.ini_options]
