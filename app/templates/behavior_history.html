@@ -1,0 +1,76 @@
+{% extends "base.html" %}
+{% block title %}Behavior history · {{ classroom.name }} · QRBank{% endblock %}
+{% block content %}
+<p><a href="/classrooms/{{ classroom.id }}">← {{ classroom.name }}</a></p>
+<h1>Classroom behavior history</h1>
+<p class="muted">Recorded positive and negative behavior events. Times use {{ timezone_name }}. General financial actions are not behavior events.</p>
+
+<form method="get" action="/classrooms/{{ classroom.id }}/behavior">
+  <label>Student
+    <select name="enrollment_id">
+      <option value="">All students</option>
+      {% for student, enrollment in roster %}
+        <option value="{{ enrollment.id }}" {% if selected.enrollment_id == enrollment.id|string %}selected{% endif %}>
+          {{ enrollment.student_code }}{% if student.display_name %} — {{ student.display_name }}{% endif %}{% if not enrollment.active %} (inactive){% endif %}
+        </option>
+      {% endfor %}
+    </select>
+  </label>
+  <label>Behavior type
+    <select name="behavior_type">
+      <option value="">Positive and negative</option>
+      {% for kind in behavior_types %}
+        <option value="{{ kind }}" {% if selected.behavior_type == kind %}selected{% endif %}>{{ kind|title }}</option>
+      {% endfor %}
+    </select>
+  </label>
+  <label>From date (classroom local)
+    <input type="date" name="date_from" value="{{ selected.date_from }}">
+  </label>
+  <label>Through date (inclusive)
+    <input type="date" name="date_to" value="{{ selected.date_to }}">
+  </label>
+  <button class="primary" type="submit">Apply filters</button>
+  <p><a href="/classrooms/{{ classroom.id }}/behavior">Clear filters / latest</a></p>
+</form>
+
+<h2>Summary — all matching events</h2>
+<p><strong>{{ total_count }}</strong> total · <strong>{{ positive_count }}</strong> positive · <strong>{{ negative_count }}</strong> negative</p>
+<p class="muted">Counts include all pages and behavior events without point changes. Reversing points does not erase a recorded behavior event.</p>
+
+<h2>Events{% if rows %} ({{ rows|length }} on this page){% endif %}</h2>
+{% if rows %}
+  <div style="display:grid; gap:.65rem;">
+    {% for row in rows %}
+      {% set event = row.event %}
+      {% set tx = row.transaction %}
+      <div style="border:1px solid #dfe5ec; border-radius:8px; padding:.8rem;">
+        <strong>{{ event.behavior_type|title }} behavior</strong>
+        · <a href="/classrooms/{{ classroom.id }}/students/{{ event.enrollment_id }}">Student {{ row.student_code }}</a>
+        {% if row.student_name %} — {{ row.student_name }}{% endif %}
+        <div class="muted">{{ row.occurred_local.strftime("%Y-%m-%d %I:%M %p %Z") }} · Event {{ event.id }}</div>
+        {% if event.action_code_snapshot %}
+          <div>Action {{ event.action_code_snapshot }}{% if event.action_name_snapshot %} — {{ event.action_name_snapshot }}{% endif %}</div>
+        {% elif tx %}
+          <div>Source: {{ tx.source|replace("_", " ")|title }}</div>
+        {% endif %}
+        {% if event.reason_name_snapshot %}<div>Reason: {{ event.reason_name_snapshot }}{% if event.reason_code_snapshot %} ({{ event.reason_code_snapshot }}){% endif %}</div>{% endif %}
+        {% if event.note %}<div>Detail: {{ event.note }}</div>{% endif %}
+        {% if tx %}
+          <div>Financial TX{{ "%06d"|format(tx.display_number) }} · {% if tx.amount > 0 %}+{% endif %}{{ tx.amount }} points</div>
+          {% if tx.note %}<div>Transaction note: {{ tx.note }}</div>{% endif %}
+          {% if row.reversed_by_number is not none %}<div class="muted">Points reversed by TX{{ "%06d"|format(row.reversed_by_number) }}; event remains in history</div>{% endif %}
+          <div><a href="/classrooms/{{ classroom.id }}/transactions?enrollment_id={{ event.enrollment_id }}">View student's ledger</a></div>
+        {% else %}
+          <div class="muted">No points posted for this event</div>
+        {% endif %}
+      </div>
+    {% endfor %}
+  </div>
+  {% if next_url %}
+    <p><a href="{{ next_url }}">Older events →</a></p>
+  {% endif %}
+{% else %}
+  <p class="muted">No behavior events match these filters.</p>
+{% endif %}
+{% endblock %}
