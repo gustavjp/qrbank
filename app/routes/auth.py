@@ -5,11 +5,11 @@ from fastapi.responses import RedirectResponse
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.auth_context import current_user_from_request
 from app.config import settings
 from app.csrf import csrf_token_for_request, set_csrf_cookie, validate_csrf
 from app.database import get_db
 from app.email_delivery import EmailDeliveryNotConfigured, send_verification_email
-from app.models.auth import User
 from app.services.auth import (
     DuplicateEmailError,
     EmailVerificationRequiredError,
@@ -21,21 +21,14 @@ from app.services.auth import (
     create_user_session,
     find_pending_verification_user,
     register_user,
-    resolve_user_session,
     revoke_user_session,
     verify_email_token,
 )
+from app.services.classrooms import list_accessible_classrooms
 from app.web import templates
 
 
 router = APIRouter()
-
-
-def _current_user(request: Request, db: Session) -> User | None:
-    token = request.cookies.get(settings.session_cookie_name)
-    if not token:
-        return None
-    return resolve_user_session(db, token=token)
 
 
 def _form_response(
@@ -58,14 +51,14 @@ def _form_response(
 
 @router.get("/")
 def home(request: Request, db: Session = Depends(get_db)):
-    if _current_user(request, db) is not None:
+    if current_user_from_request(request, db) is not None:
         return RedirectResponse("/dashboard", status_code=status.HTTP_303_SEE_OTHER)
     return RedirectResponse("/auth/login", status_code=status.HTTP_303_SEE_OTHER)
 
 
 @router.get("/auth/register")
 def register_page(request: Request, db: Session = Depends(get_db)):
-    if _current_user(request, db) is not None:
+    if current_user_from_request(request, db) is not None:
         return RedirectResponse("/dashboard", status_code=status.HTTP_303_SEE_OTHER)
     return _form_response(request, template_name="register.html")
 
@@ -193,7 +186,7 @@ def verify_email(
 
 @router.get("/auth/login")
 def login_page(request: Request, verified: int = 0, db: Session = Depends(get_db)):
-    if _current_user(request, db) is not None:
+    if current_user_from_request(request, db) is not None:
         return RedirectResponse("/dashboard", status_code=status.HTTP_303_SEE_OTHER)
 
     return _form_response(
@@ -277,17 +270,31 @@ def logout(
         httponly=True,
         samesite="lax",
     )
+    response.delete_cookie(
+        settings.active_classroom_cookie_name,
+        path="/",
+        secure=settings.session_cookie_secure,
+        httponly=True,
+        samesite="lax",
+    )
     return response
 
 
 @router.get("/dashboard")
 def dashboard(request: Request, db: Session = Depends(get_db)):
-    user = _current_user(request, db)
+    user = current_user_from_request(request, db)
     if user is None:
         return RedirectResponse("/auth/login", status_code=status.HTTP_303_SEE_OTHER)
+
+    classroom_access = list_accessible_classrooms(db, user_id=user.id)
+    active_classroom_id = request.cookies.get(settings.active_classroom_cookie_name)
 
     return _form_response(
         request,
         template_name="dashboard.html",
-        context={"user": user},
+        context={
+            "user": user,
+            "classroom_access": classroom_access,
+            "active_classroom_id": active_classroom_id,
+        },
     )
