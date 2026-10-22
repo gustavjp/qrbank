@@ -34,6 +34,7 @@ The current application includes:
 - classroom-scoped student codes with active/inactive status
 - atomic manual credit/deduction flow with required reason, category, idempotency, and behavior-event linkage
 - per-student ledger history with category, note, source, and balances
+- classroom-wide read-only positive/negative behavior event history, student/type/local-date filters, full-filter summary counts, and stable pagination
 - classroom-wide read-only ledger browsing with tenant-bound student/type/source/category/local-date filters and stable keyset pagination
 - authorized streaming CSV export of all filtered posted ledger entries, with immutable identifiers, numeric balances, local/UTC timestamps, and spreadsheet formula safeguards
 - authorized classroom roster/balance CSV export with active/all selection, integer balances, enrollment status and dates, and spreadsheet formula safeguards
@@ -130,6 +131,18 @@ export never changes any balance, ledger row, or enrollment.
 
 When importing into spreadsheet software, treat student codes as text to
 preserve leading zeros such as `01`.
+
+## Classroom behavior history
+
+From a classroom page, open **Behavior** to browse recorded positive and
+negative events and view total/positive/negative counts across the entire
+filtered period, not just one page. Filter by student, behavior type, and
+classroom-local date range. Pages are bounded to 50 events, with a stable
+timestamp/UUID cursor. Manual behavior entries show their transaction notes;
+Action behavior entries retain historical action name/code snapshots. Events
+that change no points remain visible. Linked ledger changes and any later
+financial reversal are labeled, but a reversal does not erase a recorded
+behavior event. This reporting page cannot write ledger or behavior records.
 
 ## Production security defaults
 
