@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 from app.models.classroom import ClassroomSettings
 from app.models.financial import FinancialRequest, FinancialTransaction
 from app.models.student import Enrollment
-from app.services.classrooms import require_classroom_access
+from app.services.classrooms import ClassroomPermissionError, require_classroom_access
 
 
 class FinancialIdempotencyConflictError(ValueError):
@@ -118,11 +118,15 @@ def post_opening_balance(
     if amount == 0:
         return None
 
-    require_classroom_access(
+    access = require_classroom_access(
         db,
         user_id=actor_user_id,
         classroom_id=classroom_id,
     )
+    if access.membership.role not in {"owner", "teacher"}:
+        raise ClassroomPermissionError(
+            "owner or teacher permission is required for opening balances"
+        )
 
     idempotency_key = f"opening-balance:{enrollment_id}"
     request_fingerprint = _fingerprint(
