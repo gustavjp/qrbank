@@ -168,6 +168,10 @@ def create_classroom_for_owner(
         ]
     )
     db.flush()
+    # Install the approved first-release QA1–QA10 sheet in the same transaction.
+    from app.services.actions import install_default_actions
+
+    install_default_actions(db, user_id=owner_user_id, classroom_id=classroom.id)
     return classroom
 
 

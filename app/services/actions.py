@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.models.action import Action, QuickAction
 from app.models.audit import AdminAuditEvent
+from app.models.classroom import Classroom
 from app.services.classrooms import (
     ClassroomAccess,
     ClassroomPermissionError,
@@ -21,6 +22,21 @@ ACTION_KINDS = {"general", "behavior_positive", "behavior_negative"}
 MANAGER_ROLES = {"owner", "teacher"}
 INTEGER_MIN = -(2**31 - 1)
 INTEGER_MAX = 2**31 - 1
+
+# The first-release Quick Action sheet described in SPEC.md.
+# Codes are scoped to one classroom; initialization never replaces user edits.
+DEFAULT_ACTIONS = (
+    ("A01", "QA1", "General +5", "general", 5),
+    ("A02", "QA2", "General +10", "general", 10),
+    ("A03", "QA3", "General -5", "general", -5),
+    ("A04", "QA4", "General -10", "general", -10),
+    ("A05", "QA5", "Positive Behavior +5", "behavior_positive", 5),
+    ("A06", "QA6", "Positive Behavior +10", "behavior_positive", 10),
+    ("A07", "QA7", "Behavior Deduction -5", "behavior_negative", -5),
+    ("A08", "QA8", "Behavior Deduction -10", "behavior_negative", -10),
+    ("A09", "QA9", "General +1", "general", 1),
+    ("A10", "QA10", "General -1", "general", -1),
+)
 
 
 class ActionValidationError(ValueError):
@@ -289,3 +305,65 @@ def set_quick_action_active(
                before=before, after=_quick_snapshot(quick))
     db.flush()
     return quick
+
+
+def install_default_actions(
+    db: Session, *, user_id: uuid.UUID, classroom_id: uuid.UUID,
+) -> bool:
+    """Create the standard ten mappings once, without overwriting custom codes.
+
+    The caller owns the transaction. Locking the classroom serializes concurrent
+    initialization attempts and avoids a partial install.
+    """
+    _manager(db, user_id=user_id, classroom_id=classroom_id)
+    classroom = db.scalar(select(Classroom).where(
+        Classroom.id == classroom_id, Classroom.archived_at.is_(None),
+    ).with_for_update())
+    if classroom is None:
+        raise ActionNotFoundError("classroom not found")
+
+    action_codes = {row[0] for row in db.execute(
+        select(Action.action_code).where(Action.classroom_id == classroom_id)
+    )}
+    quick_codes = {row[0] for row in db.execute(
+        select(QuickAction.quick_action_code).where(QuickAction.classroom_id == classroom_id)
+    )}
+    default_action_codes = {item[0] for item in DEFAULT_ACTIONS}
+    default_quick_codes = {item[1] for item in DEFAULT_ACTIONS}
+
+    # An existing full QA sheet is left untouched, even if a teacher remapped it.
+    if default_quick_codes <= quick_codes:
+        return False
+    if action_codes & default_action_codes or quick_codes & default_quick_codes:
+        raise ActionValidationError(
+            "some default A01-A10 or QA1-QA10 codes already exist; "
+            "finish configuring them manually to preserve existing mappings"
+        )
+
+    actions = [
+        Action(
+            id=uuid.uuid4(), classroom_id=classroom_id, action_code=action_code,
+            name=name, action_kind=kind, amount=amount, active=True,
+        )
+        for action_code, _, name, kind, amount in DEFAULT_ACTIONS
+    ]
+    db.add_all(actions)
+    db.flush()
+    db.add_all([
+        QuickAction(
+            id=uuid.uuid4(), classroom_id=classroom_id,
+            quick_action_code=quick_code, action_id=action.id,
+            display_order=index, active=True,
+        )
+        for index, ((_, quick_code, _, _, _), action)
+        in enumerate(zip(DEFAULT_ACTIONS, actions), start=1)
+    ])
+    _audit(
+        db, classroom_id=classroom_id, user_id=user_id,
+        event_type="default_actions_installed", target_type="classroom",
+        target_id=classroom_id, before=None,
+        after={"action_codes": sorted(default_action_codes),
+               "quick_action_codes": sorted(default_quick_codes)},
+    )
+    db.flush()
+    return True

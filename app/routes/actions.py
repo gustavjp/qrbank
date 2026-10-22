@@ -20,6 +20,7 @@ from app.services.actions import (
     create_quick_action,
     get_action,
     get_quick_action,
+    install_default_actions,
     list_catalog,
     set_action_active,
     set_quick_action_active,
@@ -97,6 +98,19 @@ def action_catalog(classroom_id: uuid.UUID, request: Request, db: Session = Depe
         "can_manage": catalog.access.membership.role in MANAGER_ROLES,
         "kinds": sorted(ACTION_KINDS),
     })
+
+
+@router.post("/defaults")
+def install_defaults(
+    classroom_id: uuid.UUID, request: Request,
+    csrf_token: str = Form(...), db: Session = Depends(get_db),
+):
+    user = _user(request, db)
+    return _submit(
+        request, db, csrf_token,
+        lambda: install_default_actions(db, user_id=user.id, classroom_id=classroom_id),
+        f"/classrooms/{classroom_id}/actions",
+    )
 
 
 @router.post("/new")

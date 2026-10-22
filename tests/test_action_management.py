@@ -10,7 +10,7 @@ from app.config import settings
 from app.main import app
 from app.models.action import Action, QuickAction
 from app.models.audit import AdminAuditEvent
-from app.models.classroom import ClassroomMembership
+from app.models.classroom import Classroom, ClassroomMembership, ClassroomSettings
 from app.models.financial import FinancialTransaction
 from app.services.auth import (
     create_email_verification_token,
@@ -18,7 +18,6 @@ from app.services.auth import (
     register_user,
     verify_email_token,
 )
-from app.services.classrooms import create_classroom_for_owner
 
 
 PASSWORD = "action-management-test-password"
@@ -39,10 +38,21 @@ def _client(engine) -> tuple[TestClient, uuid.UUID]:
 
 def _classroom(engine, owner_id: uuid.UUID) -> uuid.UUID:
     with Session(engine) as db, db.begin():
-        classroom = create_classroom_for_owner(
-            db, owner_user_id=owner_id, name=f"Action class {uuid.uuid4()}",
+        # These CRUD tests deliberately create a pre-defaults classroom.
+        # The separate scan/defaults suite covers automatic seeding.
+        classroom = Classroom(
+            id=uuid.uuid4(), name=f"Action class {uuid.uuid4()}",
             school_year="2026-2027",
         )
+        db.add(classroom)
+        db.flush()
+        db.add_all([
+            ClassroomSettings(classroom_id=classroom.id),
+            ClassroomMembership(
+                id=uuid.uuid4(), classroom_id=classroom.id,
+                user_id=owner_id, role="owner", created_by_user_id=owner_id,
+            ),
+        ])
         return classroom.id
 
 
