@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 
 from app.auth_context import current_user_from_request
 from app.database import SessionLocal, get_db
+from app.services.behavior_analytics import classroom_weekly_behavior_trend
 from app.services.behavior_exports import iter_classroom_behavior_csv
 from app.services.behavior_history import (
     BEHAVIOR_TYPES,
@@ -54,12 +55,17 @@ def classroom_behavior_history(
         return RedirectResponse("/auth/login", status_code=status.HTTP_303_SEE_OTHER)
 
     try:
+        parsed_from = _date_filter(date_from, "start date")
+        parsed_to = _date_filter(date_to, "end date")
         page = list_classroom_behavior(
             db, user_id=user.id, classroom_id=classroom_id,
             enrollment_id=enrollment_id, behavior_type=behavior_type,
-            date_from=_date_filter(date_from, "start date"),
-            date_to=_date_filter(date_to, "end date"),
-            before=before,
+            date_from=parsed_from, date_to=parsed_to, before=before,
+        )
+        trend = classroom_weekly_behavior_trend(
+            db, user_id=user.id, classroom_id=classroom_id,
+            enrollment_id=enrollment_id, behavior_type=behavior_type,
+            date_from=parsed_from, date_to=parsed_to,
         )
     except ClassroomNotFoundError:
         raise HTTPException(status_code=404, detail="classroom not found")
@@ -95,6 +101,7 @@ def classroom_behavior_history(
             "positive_count": page.positive_count,
             "negative_count": page.negative_count,
             "total_count": page.positive_count + page.negative_count,
+            "trend": trend,
             "behavior_types": BEHAVIOR_TYPES,
             "selected": selected,
             "next_url": next_url,

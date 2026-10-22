@@ -35,6 +35,7 @@ The current application includes:
 - atomic manual credit/deduction flow with required reason, category, idempotency, and behavior-event linkage
 - per-student ledger history with category, note, source, and balances
 - classroom-wide read-only positive/negative behavior event history, student/type/local-date filters, full-filter summary counts, and stable pagination
+- eight-week classroom-local positive/negative behavior trend chart using the same authorized student/type/date filters
 - classroom-configured positive/negative behavior reasons and audited post-scan reason/detail attachment, without financial ledger mutation
 - classroom-wide read-only ledger browsing with tenant-bound student/type/source/category/local-date filters and stable keyset pagination
 - authorized streaming CSV export of all filtered posted ledger entries, with immutable identifiers, numeric balances, local/UTC timestamps, and spreadsheet formula safeguards
@@ -132,6 +133,22 @@ export never changes any balance, ledger row, or enrollment.
 
 When importing into spreadsheet software, treat student codes as text to
 preserve leading zeros such as `01`.
+
+## Weekly behavior analytics
+
+The classroom Behavior history includes a read-only eight-week positive/negative
+event chart. Each week begins on Monday in the classroom's configured IANA
+timezone; PostgreSQL aggregates by local calendar week so daylight-saving
+transitions do not shift events into the wrong week. The chart follows the
+selected student, behavior type and classroom-local date filters.
+
+The chart ends with the current classroom-local week, or the week containing
+a selected end date; future-only start dates anchor their own week. Each of
+the eight weeks appears even with zero events. Chart counts include zero-point
+behavior events and remain unchanged when associated points are reversed.
+They do not represent point totals or balances. The separate summary above
+the chart still counts *all* matching events, not just the eight chart weeks.
+The feature is read-only and does not change behavior, audit or financial data.
 
 ## Classroom behavior history
 
