@@ -20,7 +20,7 @@ def upgrade() -> None:
     op.create_check_constraint(
         "ck_financial_transactions__manual_category",
         "financial_transactions",
-        """(transaction_type = 'manual' AND manual_category IN
+        """(transaction_type = 'manual' AND manual_category IS NOT NULL AND manual_category IN
         ('general', 'behavior_positive', 'behavior_negative'))
         OR (transaction_type <> 'manual' AND manual_category IS NULL)""",
     )
