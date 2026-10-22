@@ -3,7 +3,8 @@ from __future__ import annotations
 import hashlib
 import uuid
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
@@ -13,6 +14,8 @@ from app.models.action import Action, QuickAction
 from app.models.behavior import BehaviorEvent
 from app.models.classroom import ClassroomSettings
 from app.models.financial import FinancialRequest, FinancialTransaction
+from app.models.automation import ScheduledPayment
+from app.models.job import Job, JobAssignment
 from app.models.student import Enrollment
 from app.services.classrooms import ClassroomPermissionError, require_classroom_access
 from app.services.scanner import ScanValidationError, parse_scan_command
@@ -45,7 +48,7 @@ def _claim_request(
     db: Session,
     *,
     classroom_id: uuid.UUID,
-    actor_user_id: uuid.UUID,
+    actor_user_id: uuid.UUID | None,
     idempotency_key: str,
     request_kind: str,
     request_fingerprint: bytes,
@@ -795,3 +798,167 @@ def post_transaction_reversal(
     }
     db.flush()
     return _correction_result(db, request, kind="reversal", replayed=False)
+
+@dataclass(frozen=True)
+class ScheduledWageResult:
+    payment: ScheduledPayment
+    transaction: FinancialTransaction | None
+    amount: int
+    replayed: bool
+
+
+def post_weekly_job_wage(
+    db: Session,
+    *,
+    classroom_id: uuid.UUID,
+    assignment_id: uuid.UUID,
+    period_key: str,
+    due_at: datetime,
+    local_due_date: date,
+    automation_run_id: uuid.UUID | None = None,
+) -> ScheduledWageResult | None:
+    """Authoritative job-wage writer; caller owns the database transaction.
+
+    Lock the enrollment before the job assignment and job. The durable logical
+    identity is assignment + classroom-local week, independent of job renames
+    or wage edits after an earlier completed payment. A zero wage records the
+    consumed scheduled period, but never creates a zero-value ledger row.
+    """
+    enrollment = db.scalar(
+        select(Enrollment)
+        .join(JobAssignment, JobAssignment.enrollment_id == Enrollment.id)
+        .where(
+            JobAssignment.id == assignment_id,
+            JobAssignment.classroom_id == classroom_id,
+            Enrollment.classroom_id == classroom_id,
+        )
+        .with_for_update(of=Enrollment)
+        .execution_options(populate_existing=True)
+    )
+    if enrollment is None or not enrollment.active:
+        return None
+    assignment = db.scalar(
+        select(JobAssignment).where(
+            JobAssignment.id == assignment_id,
+            JobAssignment.classroom_id == classroom_id,
+            JobAssignment.enrollment_id == enrollment.id,
+        ).with_for_update().execution_options(populate_existing=True)
+    )
+    if assignment is None or assignment.ended_on is not None:
+        return None
+    job = db.scalar(
+        select(Job).where(
+            Job.id == assignment.job_id,
+            Job.classroom_id == classroom_id,
+        ).with_for_update().execution_options(populate_existing=True)
+    )
+    if job is None or not job.active:
+        return None
+    if (
+        assignment.started_on > local_due_date
+        or assignment.created_at > due_at
+        or enrollment.created_at > due_at
+        or (enrollment.started_on is not None and enrollment.started_on > local_due_date)
+    ):
+        # Joining a class/job after the week's payout deadline cannot earn a
+        # retroactive payment for that week.
+        return None
+
+    settings = db.scalar(
+        select(ClassroomSettings).where(
+            ClassroomSettings.classroom_id == classroom_id
+        ).with_for_update().execution_options(populate_existing=True)
+    )
+    if settings is None:
+        raise FinancialIntegrityError("classroom settings not found")
+    if not settings.weekly_wages_enabled:
+        return None
+    # A teacher can edit the schedule while a runner is processing candidates.
+    # Never post from an obsolete snapshot of the weekly due time.
+    expected_due = datetime.combine(
+        local_due_date, settings.weekly_wage_time,
+        tzinfo=ZoneInfo(settings.timezone),
+    ).astimezone(timezone.utc)
+    expected_period = (local_due_date - timedelta(days=local_due_date.weekday())).isoformat()
+    if (
+        settings.weekly_wage_day != local_due_date.weekday()
+        or expected_due != due_at
+        or expected_period != period_key
+    ):
+        return None
+
+    amount = job.weekly_wage
+    if type(amount) is not int or not 0 <= amount <= 2**31 - 1:
+        raise FinancialIntegrityError("job wage is outside the supported integer range")
+
+    request, replayed = _claim_request(
+        db, classroom_id=classroom_id, actor_user_id=None,
+        idempotency_key=f"job-wage:{assignment_id}:{period_key}",
+        request_kind="job_wage",
+        request_fingerprint=_fingerprint([
+            "job_wage", str(classroom_id), str(assignment_id), period_key,
+        ]),
+    )
+    if replayed:
+        if request.request_kind != "job_wage":
+            raise FinancialIdempotencyConflictError("wage key belongs to another operation")
+        payment = db.scalar(select(ScheduledPayment).where(
+            ScheduledPayment.classroom_id == classroom_id,
+            ScheduledPayment.payment_type == "job_wage",
+            ScheduledPayment.job_assignment_id == assignment_id,
+            ScheduledPayment.period_key == period_key,
+        ))
+        if payment is None or request.response_json is None:
+            raise FinancialIntegrityError("completed wage request has no scheduled payment")
+        transaction = (
+            db.get(FinancialTransaction, payment.financial_transaction_id)
+            if payment.financial_transaction_id else None
+        )
+        if (payment.financial_transaction_id is not None and transaction is None):
+            raise FinancialIntegrityError("completed wage ledger transaction is missing")
+        if request.response_json.get("scheduled_payment_id") != str(payment.id):
+            raise FinancialIntegrityError("wage request/payment identity mismatch")
+        return ScheduledWageResult(
+            payment=payment, transaction=transaction,
+            amount=payment.amount_snapshot, replayed=True,
+        )
+
+    before = enrollment.current_balance
+    after = before + amount
+    if not -(2**31) <= after <= 2**31 - 1:
+        raise FinancialIntegrityError("wage would exceed the supported balance range")
+
+    transaction = None
+    if amount:
+        transaction = FinancialTransaction(
+            id=uuid.uuid4(), classroom_id=classroom_id,
+            enrollment_id=enrollment.id, financial_request_id=request.id,
+            transaction_type="job_wage", source="automatic", amount=amount,
+            balance_before=before, balance_after=after, actor_user_id=None,
+            note=f"Weekly wage: {job.name} (week of {period_key})",
+            job_assignment_id=assignment.id, job_code_snapshot=job.job_code,
+            job_name_snapshot=job.name, job_wage_snapshot=amount,
+            student_code_snapshot=enrollment.student_code,
+        )
+        db.add(transaction)
+        enrollment.current_balance = after
+        db.flush()
+
+    payment = ScheduledPayment(
+        id=uuid.uuid4(), classroom_id=classroom_id,
+        payment_type="job_wage", enrollment_id=enrollment.id,
+        job_assignment_id=assignment.id, period_key=period_key,
+        amount_snapshot=amount, automation_run_id=automation_run_id,
+        financial_transaction_id=transaction.id if transaction else None,
+    )
+    db.add(payment)
+    db.flush()
+    request.response_json = {
+        "scheduled_payment_id": str(payment.id),
+        "transaction_id": str(transaction.id) if transaction else None,
+        "amount": amount, "balance_after": after,
+    }
+    db.flush()
+    return ScheduledWageResult(
+        payment=payment, transaction=transaction, amount=amount, replayed=False,
+    )

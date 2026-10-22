@@ -64,4 +64,8 @@ class FinancialTransaction(Base):
     action_name_snapshot: Mapped[str | None] = mapped_column(Text, nullable=True)
     action_kind_snapshot: Mapped[str | None] = mapped_column(Text, nullable=True)
     quick_action_code_snapshot: Mapped[str | None] = mapped_column(Text, nullable=True)
+    job_assignment_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    job_code_snapshot: Mapped[str | None] = mapped_column(Text, nullable=True)
+    job_name_snapshot: Mapped[str | None] = mapped_column(Text, nullable=True)
+    job_wage_snapshot: Mapped[int | None] = mapped_column(Integer, nullable=True)
     adjustment_target_balance: Mapped[int | None] = mapped_column(Integer, nullable=True)
