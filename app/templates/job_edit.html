@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block title %}Edit {{ job.job_code }} · QRBank{% endblock %}
+{% block content %}
+<p><a href="/classrooms/{{ classroom.id }}/jobs">← Classroom Jobs</a></p>
+<h1>Edit {{ job.job_code }}</h1>
+<p class="muted">Changing the job's wage or name does not pay students or rewrite historical transactions. Inactive jobs remain visible.</p>
+<form method="post" action="/classrooms/{{ classroom.id }}/jobs/{{ job.id }}/edit">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+  <label>Job code <input name="code" required maxlength="32" value="{{ job.job_code }}"></label>
+  <label>Name <input name="name" required maxlength="120" value="{{ job.name }}"></label>
+  <label>Weekly wage (points) <input type="number" name="weekly_wage" required min="0" max="2147483647" value="{{ job.weekly_wage }}"></label>
+  <label>Notes <textarea name="notes" maxlength="1000" rows="3">{{ job.notes or '' }}</textarea></label>
+  <button class="primary" type="submit">Save Job</button>
+</form>
+{% endblock %}

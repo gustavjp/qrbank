@@ -36,6 +36,7 @@ The current application includes:
 - per-student ledger history with category, note, source, and balances
 - classroom-wide read-only positive/negative behavior event history, student/type/local-date filters, full-filter summary counts, and stable pagination
 - eight-week classroom-local positive/negative behavior trend chart using the same authorized student/type/date filters
+- classroom-scoped job definitions with audited create/edit/deactivate/reactivate and nonnegative weekly wages
 - classroom-configured positive/negative behavior reasons and audited post-scan reason/detail attachment, without financial ledger mutation
 - classroom-wide read-only ledger browsing with tenant-bound student/type/source/category/local-date filters and stable keyset pagination
 - authorized streaming CSV export of all filtered posted ledger entries, with immutable identifiers, numeric balances, local/UTC timestamps, and spreadsheet formula safeguards
@@ -47,7 +48,7 @@ The current application includes:
 - health and readiness endpoints
 - PostgreSQL-backed automated tests
 
-Mobile camera integration, rewards UI, scheduled payments, password reset, and a production email provider are not implemented yet. Scan Mode can post QR Action/Quick Action transactions to the ledger.
+Job assignments and automatic wage payments, mobile camera integration, rewards UI, scheduled payments, password reset, and a production email provider are not implemented yet. Scan Mode can post QR Action/Quick Action transactions to the ledger.
 
 ## Local setup
 
@@ -133,6 +134,19 @@ export never changes any balance, ledger row, or enrollment.
 
 When importing into spreadsheet software, treat student codes as text to
 preserve leading zeros such as `01`.
+
+## Classroom jobs
+
+From a classroom's Jobs page, owners and teachers can define jobs with classroom-scoped
+codes (such as J01), names, nonnegative integer weekly wages, and optional notes.
+Existing jobs can be edited, deactivated and reactivated; assistants can view the
+catalog but cannot change it. Each meaningful change writes a before/after
+administrative audit event. Duplicate job codes are rejected within a classroom.
+
+Job definitions are configuration only: they never change student balances,
+create financial requests, or pay wages. Student assignments and automatic
+weekly wage transactions will be introduced separately through the central
+financial service, with PostgreSQL idempotency and ledger guarantees.
 
 ## Weekly behavior analytics
 

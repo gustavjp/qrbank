@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block title %}Classroom Jobs · {{ classroom.name }} · QRBank{% endblock %}
+{% block content %}
+<p><a href="/classrooms/{{ classroom.id }}">← {{ classroom.name }}</a></p>
+<h1>Classroom Jobs</h1>
+<p class="muted">Configure job definitions and weekly wages. Creating or editing a job does not pay students. Job assignments and automatic wages will be available in a later milestone.</p>
+
+<h2>Jobs</h2>
+{% if jobs %}
+  {% for job in jobs %}
+  <div style="border-bottom:1px solid #dfe5ec; padding:.6rem 0;">
+    <strong>{{ job.job_code }} — {{ job.name }}</strong>
+    <div>{{ job.weekly_wage }} points per week · {{ "Active" if job.active else "Inactive" }}</div>
+    {% if job.notes %}<p class="muted">{{ job.notes }}</p>{% endif %}
+    {% if can_manage %}
+      <a href="/classrooms/{{ classroom.id }}/jobs/{{ job.id }}/edit">Edit</a>
+      <form style="display:inline" method="post" action="/classrooms/{{ classroom.id }}/jobs/{{ job.id }}/active">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <input type="hidden" name="active" value="{{ 'false' if job.active else 'true' }}">
+        <button class="secondary" type="submit">{{ "Deactivate" if job.active else "Reactivate" }}</button>
+      </form>
+    {% endif %}
+  </div>
+  {% endfor %}
+{% else %}<p>No classroom jobs configured yet.</p>{% endif %}
+
+{% if can_manage %}
+<h2>Create Job</h2>
+<form method="post" action="/classrooms/{{ classroom.id }}/jobs/new">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+  <label>Job code <input name="code" required maxlength="32" placeholder="J01"></label>
+  <label>Name <input name="name" required maxlength="120" placeholder="Class Librarian"></label>
+  <label>Weekly wage (points) <input type="number" name="weekly_wage" required min="0" max="2147483647" value="0"></label>
+  <label>Notes (optional) <textarea name="notes" maxlength="1000" rows="3"></textarea></label>
+  <button class="primary" type="submit">Create Job</button>
+</form>
+{% endif %}
+{% endblock %}
