@@ -75,6 +75,10 @@ def _tx_numbers(html_text):
     return [int(value) for value in re.findall(r"<strong>TX([0-9]{6,})</strong>", html_text)]
 
 
+def _result_section(html_text):
+    return html_text.split('<h2>Posted transactions', 1)[1]
+
+
 def test_history_is_read_only_membership_authorized_and_classroom_scoped(engine):
     client, owner = _actor(engine)
     outsider_client, outsider = _actor(engine)
@@ -149,7 +153,7 @@ def test_filter_by_student_type_source_category_and_snapshot_after_rename(engine
     assert "Rule deduction" in filtered.text
     assert "General +5" in filtered.text
     assert "Count correction" in filtered.text
-    assert "Student 02" not in filtered.text
+    assert "Student 02" not in _result_section(filtered.text)
 
     manual = client.get(base + "?transaction_type=manual&category=behavior_negative")
     assert manual.status_code == 200
@@ -167,7 +171,7 @@ def test_filter_by_student_type_source_category_and_snapshot_after_rename(engine
     second = client.get(base + f"?enrollment_id={student_b}")
     assert second.status_code == 200
     assert len(_tx_numbers(second.text)) == 1
-    assert "Student 02" in second.text
+    assert "Student 02" in _result_section(second.text)
     assert "Rule deduction" not in second.text
 
 
