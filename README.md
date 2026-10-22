@@ -45,6 +45,7 @@ The current application includes:
 - owner/teacher reward fulfillment (redeem and reasoned reopening), immutable event history, optimistic stale-form protection, and classroom-wide status filtering
 - optional per-reward stock setup and reasoned stock-count adjustments, with tenant-scoped history, audit records, concurrency safeguards, and purchase/refund coordination
 - classroom-local optional reward purchase windows with audited schedule edits, DST validation, stale-form protection, and matching catalog/student-page availability states
+- classroom QR Code Center with immediate, locally generated PNG/SVG downloads for active students, Quick Actions, and Actions; codes match scanner commands
 - classroom-configured positive/negative behavior reasons and audited post-scan reason/detail attachment, without financial ledger mutation
 - classroom-wide read-only ledger browsing with tenant-bound student/type/source/category/local-date filters and stable keyset pagination
 - authorized streaming CSV export of all filtered posted ledger entries, with immutable identifiers, numeric balances, local/UTC timestamps, and spreadsheet formula safeguards
@@ -56,7 +57,7 @@ The current application includes:
 - health and readiness endpoints
 - PostgreSQL-backed automated tests
 
-Weekly job wages and student allowances have external scheduler commands, but no scheduler is provisioned or enabled automatically. Inventory tracking cannot yet be disabled after activation; refund undo, reward images, mobile camera integration, password reset, and a production email provider are not implemented yet. Scan Mode can post QR Action/Quick Action transactions to the ledger.
+Weekly job wages and student allowances have external scheduler commands, but no scheduler is provisioned or enabled automatically. Inventory tracking cannot yet be disabled after activation; bulk printable QR sheets/PDFs, refund undo, reward images, mobile camera integration, password reset, and a production email provider are not implemented yet. Scan Mode can post QR Action/Quick Action transactions to the ledger.
 
 ## Local setup
 
