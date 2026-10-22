@@ -771,6 +771,17 @@ def post_transaction_reversal(
 
     if target.transaction_type not in REVERSIBLE_TRANSACTION_TYPES:
         return reject("unsupported_transaction_type")
+    # A reward refund is already a coordinated reversal. Undoing that reversal
+    # through the generic path would debit points without restoring the reward
+    # purchase/fulfillment/inventory state. It needs its own future workflow.
+    if target.transaction_type == "reversal" and target.reverses_transaction_id is not None:
+        original_type = db.scalar(select(FinancialTransaction.transaction_type).where(
+            FinancialTransaction.id == target.reverses_transaction_id,
+            FinancialTransaction.classroom_id == classroom_id,
+            FinancialTransaction.enrollment_id == enrollment_id,
+        ))
+        if original_type == "reward_purchase":
+            return reject("unsupported_transaction_type")
     reversed_already = db.scalar(select(FinancialTransaction.id).where(
         FinancialTransaction.classroom_id == classroom_id,
         FinancialTransaction.enrollment_id == enrollment_id,
@@ -1323,5 +1334,231 @@ def post_reward_purchase(
     db.flush()
     return RewardPurchaseResult(
         purchase=purchase, transaction=transaction, replayed=False,
+        rejection_code=None, balance_after=after,
+    )
+
+
+@dataclass(frozen=True)
+class RewardRefundResult:
+    purchase: RewardPurchase | None
+    transaction: FinancialTransaction | None
+    replayed: bool
+    rejection_code: str | None
+    balance_after: int
+
+
+def _reward_refund_result(
+    db: Session, request: FinancialRequest, *, replayed: bool,
+) -> RewardRefundResult:
+    response = request.response_json
+    if response is None:
+        raise FinancialIntegrityError("reward refund has no stored result")
+    transaction_id = response.get("transaction_id")
+    purchase_id = response.get("purchase_id")
+    if request.status == "rejected":
+        if transaction_id is not None or not request.rejection_code:
+            raise FinancialIntegrityError("rejected reward refund has an inconsistent result")
+        return RewardRefundResult(
+            purchase=None, transaction=None, replayed=replayed,
+            rejection_code=request.rejection_code,
+            balance_after=response["balance_after"],
+        )
+    if request.status != "completed" or not transaction_id or not purchase_id:
+        raise FinancialIntegrityError("completed reward refund has no reversal or purchase")
+    transaction = _existing_transaction_for_request(db, request_id=request.id)
+    purchase = db.get(RewardPurchase, uuid.UUID(purchase_id))
+    if (
+        purchase is None
+        or str(transaction.id) != transaction_id
+        or transaction.classroom_id != request.classroom_id
+        or transaction.transaction_type != "reversal"
+        or transaction.reverses_transaction_id != purchase.purchase_transaction_id
+        or transaction.enrollment_id != purchase.enrollment_id
+        or transaction.reward_id != purchase.reward_id
+        or transaction.amount != purchase.price_snapshot
+        or purchase.classroom_id != request.classroom_id
+        or purchase.fulfillment_status != "cancelled"
+        or response.get("balance_after") != transaction.balance_after
+    ):
+        raise FinancialIntegrityError("reward refund and reversal ledger disagree")
+    return RewardRefundResult(
+        purchase=purchase, transaction=transaction, replayed=replayed,
+        rejection_code=None, balance_after=transaction.balance_after,
+    )
+
+
+def post_reward_refund(
+    db: Session,
+    *,
+    actor_user_id: uuid.UUID,
+    classroom_id: uuid.UUID,
+    enrollment_id: uuid.UUID,
+    purchase_id: uuid.UUID,
+    note: str,
+    request_id: uuid.UUID,
+) -> RewardRefundResult:
+    """Append an exact reversal of an unused reward purchase, atomically.
+
+    Never delete or overwrite financial entries. A refund also cancels the
+    purchase, appends a fulfillment event and, if the purchase consumed stock,
+    restores one unit with an inventory event. The caller commits or rolls back.
+    """
+    if any(type(x) is not uuid.UUID for x in (enrollment_id, purchase_id, request_id)):
+        raise RewardPurchaseValidationError("enrollment, purchase, and request IDs must be UUIDs")
+    note = _correction_note(note)
+    _require_correction_permission(
+        db, actor_user_id=actor_user_id, classroom_id=classroom_id,
+    )
+
+    request, replayed = _claim_request(
+        db, classroom_id=classroom_id, actor_user_id=actor_user_id,
+        idempotency_key=str(request_id), request_kind="reward_refund",
+        request_fingerprint=_fingerprint([
+            "reward_refund", str(classroom_id), str(actor_user_id),
+            str(enrollment_id), str(purchase_id), note,
+        ]),
+    )
+    if replayed:
+        if request.request_kind != "reward_refund" or request.actor_user_id != actor_user_id:
+            raise FinancialIdempotencyConflictError("request ID belongs to another operation")
+        return _reward_refund_result(db, request, replayed=True)
+
+    # Resolve the immutable purchase account without taking a lock. Acquire
+    # locks in the same order as buying: enrollment first, then reward, then
+    # purchase. Even refunds of different purchases serialize per student.
+    record = db.scalar(select(RewardPurchase).where(
+        RewardPurchase.id == purchase_id,
+        RewardPurchase.classroom_id == classroom_id,
+        RewardPurchase.enrollment_id == enrollment_id,
+    ))
+    if record is None:
+        raise RewardPurchaseNotFoundError("reward purchase not found in classroom")
+    enrollment = db.scalar(select(Enrollment).where(
+        Enrollment.id == record.enrollment_id,
+        Enrollment.classroom_id == classroom_id,
+    ).with_for_update().execution_options(populate_existing=True))
+    if enrollment is None:
+        raise FinancialIntegrityError("reward purchase enrollment is missing")
+    reward = db.scalar(select(Reward).where(
+        Reward.id == record.reward_id,
+        Reward.classroom_id == classroom_id,
+    ).with_for_update().execution_options(populate_existing=True))
+    if reward is None:
+        raise FinancialIntegrityError("purchased reward is missing")
+    purchase = db.scalar(select(RewardPurchase).where(
+        RewardPurchase.id == purchase_id,
+        RewardPurchase.classroom_id == classroom_id,
+        RewardPurchase.enrollment_id == enrollment.id,
+        RewardPurchase.reward_id == reward.id,
+    ).with_for_update().execution_options(populate_existing=True))
+    if purchase is None:
+        raise FinancialIntegrityError("reward purchase changed while being refunded")
+
+    before = enrollment.current_balance
+
+    def reject(code: str) -> RewardRefundResult:
+        request.status = "rejected"
+        request.rejection_code = code
+        request.response_json = {
+            "transaction_id": None, "purchase_id": str(purchase.id),
+            "balance_after": before,
+        }
+        db.flush()
+        return _reward_refund_result(db, request, replayed=False)
+
+    if purchase.fulfillment_status == "cancelled":
+        return reject("already_refunded")
+    if purchase.fulfillment_status != "unused":
+        return reject("already_redeemed")
+
+    original = db.scalar(select(FinancialTransaction).where(
+        FinancialTransaction.id == purchase.purchase_transaction_id,
+        FinancialTransaction.classroom_id == classroom_id,
+        FinancialTransaction.enrollment_id == enrollment.id,
+        FinancialTransaction.reward_id == reward.id,
+    ))
+    if (
+        original is None
+        or original.transaction_type != "reward_purchase"
+        or original.source != "reward_store"
+        or original.amount != -purchase.price_snapshot
+        or original.reward_price_snapshot != purchase.price_snapshot
+        or original.reward_code_snapshot != purchase.reward_code_snapshot
+        or original.reward_name_snapshot != purchase.reward_name_snapshot
+    ):
+        raise FinancialIntegrityError("original reward purchase ledger is inconsistent")
+    previously_reversed = db.scalar(select(FinancialTransaction.id).where(
+        FinancialTransaction.classroom_id == classroom_id,
+        FinancialTransaction.enrollment_id == enrollment.id,
+        FinancialTransaction.reverses_transaction_id == original.id,
+    ).limit(1))
+    if previously_reversed is not None:
+        raise FinancialIntegrityError("uncancelled reward purchase already has a reversal")
+
+    amount = purchase.price_snapshot
+    after = before + amount
+    if after > 2**31 - 1:
+        return reject("balance_out_of_range")
+
+    decrement = db.scalar(select(RewardInventoryEvent).where(
+        RewardInventoryEvent.classroom_id == classroom_id,
+        RewardInventoryEvent.reward_id == reward.id,
+        RewardInventoryEvent.reward_purchase_id == purchase.id,
+        RewardInventoryEvent.financial_transaction_id == original.id,
+        RewardInventoryEvent.event_type == "purchase_decrement",
+    ))
+    if decrement is not None and (
+        decrement.delta != -1
+        or not reward.inventory_tracking
+        or reward.quantity_available is None
+        or reward.quantity_available < 0
+    ):
+        raise FinancialIntegrityError("inventory tracking changed after the purchase")
+    if decrement is not None and reward.quantity_available == 2**31 - 1:
+        return reject("stock_limit_exceeded")
+
+    reversal = FinancialTransaction(
+        id=uuid.uuid4(), classroom_id=classroom_id,
+        enrollment_id=enrollment.id, financial_request_id=request.id,
+        transaction_type="reversal", source="manual",
+        amount=amount, balance_before=before, balance_after=after,
+        actor_user_id=actor_user_id, note=f"Reward refund: {note}",
+        reverses_transaction_id=original.id,
+        reward_id=reward.id,
+        reward_code_snapshot=purchase.reward_code_snapshot,
+        reward_name_snapshot=purchase.reward_name_snapshot,
+        reward_price_snapshot=amount,
+        student_code_snapshot=enrollment.student_code,
+    )
+    db.add(reversal)
+    enrollment.current_balance = after
+    purchase.fulfillment_status = "cancelled"
+    db.flush()
+    db.add(RewardFulfillmentEvent(
+        id=uuid.uuid4(), reward_purchase_id=purchase.id,
+        from_status="unused", to_status="cancelled",
+        actor_user_id=actor_user_id, note=note,
+    ))
+    if decrement is not None:
+        quantity_before = reward.quantity_available
+        quantity_after = quantity_before + 1
+        reward.quantity_available = quantity_after
+        reward.updated_at = datetime.now(timezone.utc)
+        db.add(RewardInventoryEvent(
+            id=uuid.uuid4(), classroom_id=classroom_id,
+            reward_id=reward.id, reward_purchase_id=purchase.id,
+            financial_transaction_id=reversal.id,
+            event_type="refund_restore", delta=1,
+            quantity_before=quantity_before, quantity_after=quantity_after,
+            actor_user_id=actor_user_id, note=note,
+        ))
+
+    request.response_json = {
+        "transaction_id": str(reversal.id), "purchase_id": str(purchase.id),
+        "balance_after": after,
+    }
+    db.flush()
+    return RewardRefundResult(
+        purchase=purchase, transaction=reversal, replayed=False,
         rejection_code=None, balance_after=after,
     )

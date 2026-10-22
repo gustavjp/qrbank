@@ -272,6 +272,7 @@ def student_detail(
     reversed: int = 0,
     replayed: int = 0,
     purchased: int = 0,
+    refunded: int = 0,
     db: Session = Depends(get_db),
 ):
     user = current_user_from_request(request, db)
@@ -284,6 +285,7 @@ def student_detail(
         saved=bool(saved), posted=bool(posted),
         adjusted=bool(adjusted), reversed=bool(reversed),
         replayed=bool(replayed), purchased=bool(purchased),
+        refunded=bool(refunded),
     )
 
 
@@ -292,6 +294,7 @@ def _detail_response(
     classroom_id: uuid.UUID, enrollment_id: uuid.UUID,
     saved: bool = False, posted: bool = False, adjusted: bool = False,
     reversed: bool = False, replayed: bool = False, purchased: bool = False,
+    refunded: bool = False,
     financial_error: str | None = None, status_code: int = 200,
 ):
     try:
@@ -326,10 +329,11 @@ def _detail_response(
             "can_manage": can_manage,
             "saved": saved, "posted": posted,
             "adjusted": adjusted, "reversed": reversed,
-            "replayed": replayed, "purchased": purchased,
+            "replayed": replayed, "purchased": purchased, "refunded": refunded,
             "financial_error": financial_error,
             "available_rewards": available_rewards,
             "reward_purchases": reward_purchases,
+            "reward_refund_request_ids": {p.id: uuid.uuid4() for p in reward_purchases},
             "purchase_request_ids": {r.id: uuid.uuid4() for r in available_rewards},
             "manual_request_id": uuid.uuid4(),
             "adjustment_request_id": uuid.uuid4(),

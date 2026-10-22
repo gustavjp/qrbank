@@ -9,6 +9,7 @@
 {% if adjusted %}<p class="success">Balance adjustment posted to the ledger.</p>{% endif %}
 {% if reversed %}<p class="success">Reversal posted to the ledger; original transaction retained.</p>{% endif %}
 {% if purchased %}<p class="success">Reward purchased; points deducted and recorded in the ledger.</p>{% endif %}
+{% if refunded %}<p class="success">Reward refunded; an exact reversal was posted and available stock restored if tracked.</p>{% endif %}
 {% if replayed %}<p class="success">This request was already processed; no duplicate transaction was posted.</p>{% endif %}
 {% if financial_error %}<p class="error" role="alert">{{ financial_error }}</p>{% endif %}
 
@@ -49,7 +50,19 @@
 {% if reward_purchases %}
   <ul>
     {% for purchase in reward_purchases %}
-      <li>{{ purchase.reward_code_snapshot }} — {{ purchase.reward_name_snapshot }} · {{ purchase.price_snapshot }} points · {{ purchase.fulfillment_status|title }}</li>
+      <li>
+        {{ purchase.reward_code_snapshot }} — {{ purchase.reward_name_snapshot }} · {{ purchase.price_snapshot }} points · {{ purchase.fulfillment_status|title }}
+        {% if can_manage and purchase.fulfillment_status == "unused" %}
+          <form method="post" action="/classrooms/{{ classroom.id }}/students/{{ enrollment.id }}/reward-purchases/{{ purchase.id }}/refund">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <input type="hidden" name="request_id" value="{{ reward_refund_request_ids[purchase.id] }}">
+            <label>Refund reason
+              <input type="text" name="note" maxlength="500" required placeholder="Why is this purchase being refunded?">
+            </label>
+            <button class="secondary" type="submit">Refund {{ purchase.price_snapshot }} points</button>
+          </form>
+        {% endif %}
+      </li>
     {% endfor %}
   </ul>
 {% else %}
@@ -150,7 +163,7 @@
         {% set undo = reversed_by.get(tx.id) %}
         {% if undo %}
           <div class="muted">Reversed by TX{{ "%06d"|format(undo.display_number) }}</div>
-        {% elif can_manage and tx.transaction_type in reversible_types %}
+        {% elif can_manage and tx.transaction_type in reversible_types and not (tx.transaction_type == "reversal" and tx.reward_id is not none) %}
           <form method="post" action="/classrooms/{{ classroom.id }}/students/{{ enrollment.id }}/transactions/{{ tx.id }}/reverse">
             <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
             <input type="hidden" name="request_id" value="{{ reversal_request_ids[tx.id] }}">

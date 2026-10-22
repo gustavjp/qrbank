@@ -11,8 +11,9 @@ from app.csrf import validate_csrf
 from app.database import get_db
 from app.services.classrooms import ClassroomNotFoundError, ClassroomPermissionError
 from app.services.financial import (
-    FinancialIdempotencyConflictError, RewardPurchaseNotFoundError,
-    RewardPurchaseValidationError, post_reward_purchase,
+    FinancialCorrectionValidationError, FinancialIdempotencyConflictError,
+    RewardPurchaseNotFoundError, RewardPurchaseValidationError,
+    post_reward_purchase, post_reward_refund,
 )
 
 
@@ -107,4 +108,63 @@ def purchase_from_catalog(
         classroom_id=classroom_id, enrollment_id=enrollment_id,
         reward_id=reward_id, expected_price=expected_price, request_id=request_id,
         redirect_path=f"/classrooms/{classroom_id}/rewards",
+    )
+
+
+REFUND_REJECTION_MESSAGES = {
+    "already_refunded": "This reward purchase was already cancelled or refunded.",
+    "already_redeemed": "A redeemed reward cannot be refunded through this form.",
+    "balance_out_of_range": "The refund would exceed the supported account balance.",
+    "stock_limit_exceeded": "Restoring the reward would exceed the inventory limit.",
+}
+
+
+@router.post(
+    "/classrooms/{classroom_id}/students/{enrollment_id}/"
+    "reward-purchases/{purchase_id}/refund"
+)
+def refund_reward_purchase(
+    classroom_id: uuid.UUID, enrollment_id: uuid.UUID, purchase_id: uuid.UUID,
+    request: Request, note: str = Form(...),
+    request_id: uuid.UUID = Form(...), csrf_token: str = Form(...),
+    db: Session = Depends(get_db),
+):
+    user = current_user_from_request(request, db)
+    if user is None:
+        raise HTTPException(status_code=401, detail="sign in required")
+    validate_csrf(request, csrf_token)
+    try:
+        result = post_reward_refund(
+            db, actor_user_id=user.id, classroom_id=classroom_id,
+            enrollment_id=enrollment_id, purchase_id=purchase_id,
+            note=note, request_id=request_id,
+        )
+        db.commit()
+    except (ClassroomNotFoundError, RewardPurchaseNotFoundError):
+        db.rollback()
+        raise HTTPException(status_code=404, detail="reward purchase not found")
+    except ClassroomPermissionError:
+        db.rollback()
+        raise HTTPException(status_code=403, detail="owner or teacher permission is required")
+    except FinancialIdempotencyConflictError:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="request ID was reused with different inputs")
+    except (FinancialCorrectionValidationError, RewardPurchaseValidationError) as exc:
+        db.rollback()
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception:
+        db.rollback()
+        raise
+
+    if result.rejection_code:
+        raise HTTPException(
+            status_code=422,
+            detail=REFUND_REJECTION_MESSAGES.get(
+                result.rejection_code, "Reward refund rejected; no points changed."
+            ),
+        )
+    return RedirectResponse(
+        f"/classrooms/{classroom_id}/students/{enrollment_id}"
+        + ("?replayed=1" if result.replayed else "?refunded=1"),
+        status_code=status.HTTP_303_SEE_OTHER,
     )

@@ -23,6 +23,9 @@ from app.services.auth import (
     register_user, verify_email_token,
 )
 from app.services.financial import post_reward_purchase
+from app.services.financial import (
+    FinancialIntegrityError, post_reward_refund, post_transaction_reversal,
+)
 
 
 PASSWORD = "reward-purchase-test-password"
@@ -139,6 +142,19 @@ def _store_buy(
         data={
             "enrollment_id": str(enrollment), "expected_price": str(expected_price),
             "request_id": str(request_id or uuid.uuid4()),
+            "csrf_token": _csrf(client),
+        },
+    )
+
+
+def _refund(
+    client, classroom, enrollment, purchase_id, *, note="Mistaken purchase", request_id=None,
+):
+    client.get(f"/classrooms/{classroom}/students/{enrollment}")
+    return client.post(
+        f"/classrooms/{classroom}/students/{enrollment}/reward-purchases/{purchase_id}/refund",
+        data={
+            "note": note, "request_id": str(request_id or uuid.uuid4()),
             "csrf_token": _csrf(client),
         },
     )
@@ -478,3 +494,369 @@ def test_anonymous_and_bad_csrf_or_form_inputs_cannot_purchase(engine):
         **raw, "expected_price": "1.5", "csrf_token": _csrf(client),
     }).status_code == 422
     assert _rows(engine, FinancialRequest, classroom) == []
+
+
+def test_refund_posts_exact_linked_reversal_cancels_purchase_and_restores_stock(engine):
+    client, owner = _client(engine)
+    classroom = _classroom(engine, owner)
+    student = _enrollment(engine, classroom, balance=100)
+    reward = _reward(engine, classroom, stock=3, owner=owner)
+    assert _student_buy(client, classroom, student, reward).status_code == 303
+    purchase = _rows(engine, RewardPurchase, classroom)[0]
+
+    page = client.get(f"/classrooms/{classroom}/students/{student}")
+    assert f"/reward-purchases/{purchase.id}/refund" in page.text
+    response = _refund(client, classroom, student, purchase.id, note="Accidental purchase")
+    assert response.status_code == 303 and "refunded=1" in response.headers["location"]
+
+    with Session(engine) as db:
+        assert db.get(Enrollment, student).current_balance == 100
+        assert db.get(Reward, reward).quantity_available == 3
+        updated = db.get(RewardPurchase, purchase.id)
+        assert updated.fulfillment_status == "cancelled"
+        txs = list(db.scalars(select(FinancialTransaction).where(
+            FinancialTransaction.classroom_id == classroom,
+        ).order_by(FinancialTransaction.display_number)))
+        assert len(txs) == 2
+        original, reversal = txs
+        assert (original.amount, original.balance_before, original.balance_after) == (-30, 100, 70)
+        assert (reversal.amount, reversal.balance_before, reversal.balance_after) == (30, 70, 100)
+        assert reversal.transaction_type == "reversal"
+        assert reversal.reverses_transaction_id == original.id
+        assert reversal.reward_id == reward
+        assert reversal.reward_code_snapshot == "R01"
+        assert reversal.reward_name_snapshot == "Choose Your Seat"
+        assert reversal.reward_price_snapshot == 30
+        assert reversal.note == "Reward refund: Accidental purchase"
+        assert original.transaction_type == "reward_purchase"
+        assert updated.purchase_transaction_id == original.id
+        fulfillment = list(db.scalars(select(RewardFulfillmentEvent).where(
+            RewardFulfillmentEvent.reward_purchase_id == purchase.id,
+        ).order_by(RewardFulfillmentEvent.occurred_at, RewardFulfillmentEvent.id)))
+        assert len(fulfillment) == 2
+        assert {(e.from_status, e.to_status) for e in fulfillment} == {
+            (None, "unused"), ("unused", "cancelled"),
+        }
+        assert next(e for e in fulfillment if e.to_status == "cancelled").note == "Accidental purchase"
+        stock_events = list(db.scalars(select(RewardInventoryEvent).where(
+            RewardInventoryEvent.classroom_id == classroom,
+        )))
+        assert len(stock_events) == 3
+        restore = next(e for e in stock_events if e.event_type == "refund_restore")
+        assert (restore.quantity_before, restore.delta, restore.quantity_after) == (2, 1, 3)
+        assert restore.reward_purchase_id == purchase.id
+        assert restore.financial_transaction_id == reversal.id
+
+    history = client.get(f"/classrooms/{classroom}/students/{student}")
+    assert "Reward refunded" not in history.text  # A normal history view has no success banner.
+    assert "30 points · Cancelled" in history.text
+    assert "Refund 30 points" not in history.text
+    assert f"/transactions/{reversal.id}/reverse" not in history.text
+
+
+def test_untracked_reward_refund_does_not_invent_inventory(engine):
+    client, owner = _client(engine)
+    classroom = _classroom(engine, owner)
+    student = _enrollment(engine, classroom)
+    reward = _reward(engine, classroom)
+    assert _student_buy(client, classroom, student, reward).status_code == 303
+    purchase = _rows(engine, RewardPurchase, classroom)[0]
+    assert _refund(client, classroom, student, purchase.id).status_code == 303
+    assert _rows(engine, RewardInventoryEvent, classroom) == []
+    with Session(engine) as db:
+        assert db.get(Reward, reward).quantity_available is None
+        assert db.get(Enrollment, student).current_balance == 100
+
+
+def test_refund_replays_once_and_rejects_changed_request_or_second_refund(engine):
+    client, owner = _client(engine)
+    classroom = _classroom(engine, owner)
+    student = _enrollment(engine, classroom)
+    reward = _reward(engine, classroom)
+    assert _student_buy(client, classroom, student, reward).status_code == 303
+    purchase = _rows(engine, RewardPurchase, classroom)[0]
+    request_id = uuid.uuid4()
+    assert _refund(client, classroom, student, purchase.id, request_id=request_id).status_code == 303
+    replay = _refund(client, classroom, student, purchase.id, request_id=request_id)
+    assert replay.status_code == 303 and "replayed=1" in replay.headers["location"]
+    assert _refund(client, classroom, student, purchase.id,
+                   note="Different reason", request_id=request_id).status_code == 409
+    another = _refund(client, classroom, student, purchase.id)
+    assert another.status_code == 422 and "already" in another.text
+    assert len(_rows(engine, FinancialTransaction, classroom)) == 2
+    assert len(_rows(engine, FinancialRequest, classroom)) == 3
+    with Session(engine) as db:
+        assert db.get(Enrollment, student).current_balance == 100
+
+
+def test_concurrent_distinct_refunds_cannot_credit_the_same_purchase_twice(engine):
+    _, owner = _client(engine)
+    classroom = _classroom(engine, owner)
+    student = _enrollment(engine, classroom)
+    reward = _reward(engine, classroom, stock=2, owner=owner)
+    with Session(engine) as db, db.begin():
+        result = post_reward_purchase(
+            db, actor_user_id=owner, classroom_id=classroom,
+            enrollment_id=student, reward_id=reward,
+            expected_price=30, request_id=uuid.uuid4(),
+        )
+        purchase_id = result.purchase.id
+
+    def refund(_):
+        with Session(engine) as db, db.begin():
+            return post_reward_refund(
+                db, actor_user_id=owner, classroom_id=classroom,
+                enrollment_id=student, purchase_id=purchase_id,
+                note="Teacher correction", request_id=uuid.uuid4(),
+            )
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        outcomes = list(pool.map(refund, [0, 1]))
+    assert sorted(r.rejection_code or "refunded" for r in outcomes) == [
+        "already_refunded", "refunded",
+    ]
+    assert len(_rows(engine, FinancialTransaction, classroom)) == 2
+    assert len(_rows(engine, RewardInventoryEvent, classroom)) == 3
+    with Session(engine) as db:
+        assert db.get(Enrollment, student).current_balance == 100
+        assert db.get(Reward, reward).quantity_available == 2
+
+
+def test_refund_and_new_purchase_compete_safely_for_last_stock(engine):
+    _, owner = _client(engine)
+    classroom = _classroom(engine, owner)
+    first = _enrollment(engine, classroom, "01")
+    second = _enrollment(engine, classroom, "02")
+    reward = _reward(engine, classroom, stock=1, owner=owner)
+    with Session(engine) as db, db.begin():
+        bought = post_reward_purchase(
+            db, actor_user_id=owner, classroom_id=classroom,
+            enrollment_id=first, reward_id=reward,
+            expected_price=30, request_id=uuid.uuid4(),
+        )
+        purchase_id = bought.purchase.id
+
+    def refund():
+        with Session(engine) as db, db.begin():
+            return post_reward_refund(
+                db, actor_user_id=owner, classroom_id=classroom,
+                enrollment_id=first, purchase_id=purchase_id,
+                note="Restock after mistake", request_id=uuid.uuid4(),
+            )
+
+    def buy():
+        with Session(engine) as db, db.begin():
+            return post_reward_purchase(
+                db, actor_user_id=owner, classroom_id=classroom,
+                enrollment_id=second, reward_id=reward,
+                expected_price=30, request_id=uuid.uuid4(),
+            )
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        refund_future = pool.submit(refund)
+        buy_future = pool.submit(buy)
+        refund_outcome = refund_future.result()
+        buy_outcome = buy_future.result()
+
+    assert refund_outcome.transaction is not None
+    assert buy_outcome.rejection_code in (None, "out_of_stock")
+    with Session(engine) as db:
+        assert db.get(Enrollment, first).current_balance == 100
+        assert db.get(Enrollment, second).current_balance == (
+            70 if buy_outcome.rejection_code is None else 100
+        )
+        assert db.get(Reward, reward).quantity_available == (
+            0 if buy_outcome.rejection_code is None else 1
+        )
+    assert len(_rows(engine, RewardPurchase, classroom)) == (
+        2 if buy_outcome.rejection_code is None else 1
+    )
+
+
+def test_refunds_block_redeemed_purchases_and_generic_undo_of_refund(engine):
+    client, owner = _client(engine)
+    classroom = _classroom(engine, owner)
+    first = _enrollment(engine, classroom, "01")
+    second = _enrollment(engine, classroom, "02")
+    reward = _reward(engine, classroom)
+    assert _student_buy(client, classroom, first, reward).status_code == 303
+    purchase = _rows(engine, RewardPurchase, classroom)[0]
+    with Session(engine) as db, db.begin():
+        db.get(RewardPurchase, purchase.id).fulfillment_status = "redeemed"
+    assert _refund(client, classroom, first, purchase.id).status_code == 422
+    with Session(engine) as db, db.begin():
+        db.get(RewardPurchase, purchase.id).fulfillment_status = "unused"
+    assert _refund(client, classroom, first, purchase.id).status_code == 303
+    reversal = next(t for t in _rows(engine, FinancialTransaction, classroom)
+                    if t.transaction_type == "reversal")
+    with Session(engine) as db, db.begin():
+        undo = post_transaction_reversal(
+            db, actor_user_id=owner, classroom_id=classroom,
+            enrollment_id=first, target_transaction_id=reversal.id,
+            note="Try to undo refund", request_id=uuid.uuid4(),
+        )
+        assert undo.rejection_code == "unsupported_transaction_type"
+    with Session(engine) as db:
+        assert db.get(Enrollment, first).current_balance == 100
+        assert db.get(Enrollment, second).current_balance == 100
+    assert len(_rows(engine, FinancialTransaction, classroom)) == 2
+
+
+def test_refund_does_not_trust_new_catalog_price_or_student_status(engine):
+    client, owner = _client(engine)
+    classroom = _classroom(engine, owner)
+    student = _enrollment(engine, classroom, active=True)
+    reward = _reward(engine, classroom, price=30)
+    assert _student_buy(client, classroom, student, reward).status_code == 303
+    purchase = _rows(engine, RewardPurchase, classroom)[0]
+    with Session(engine) as db, db.begin():
+        db.get(Reward, reward).price_points = 100
+        db.get(Reward, reward).name = "Updated reward"
+        db.get(Reward, reward).active = False
+        db.get(Enrollment, student).active = False
+    assert _refund(client, classroom, student, purchase.id).status_code == 303
+    refund_tx = next(t for t in _rows(engine, FinancialTransaction, classroom)
+                     if t.transaction_type == "reversal")
+    assert refund_tx.amount == 30
+    assert refund_tx.reward_name_snapshot == "Choose Your Seat"
+    with Session(engine) as db:
+        assert db.get(Enrollment, student).current_balance == 100
+
+
+def test_refund_enforces_tenant_student_membership_and_csrf(engine):
+    client, owner = _client(engine)
+    outsider_client, outsider = _client(engine)
+    assistant_client, assistant = _client(engine)
+    a = _classroom(engine, owner)
+    b = _classroom(engine, outsider)
+    student = _enrollment(engine, a, "01")
+    other_student = _enrollment(engine, a, "02")
+    foreign_student = _enrollment(engine, b)
+    reward = _reward(engine, a)
+    assert _student_buy(client, a, student, reward).status_code == 303
+    purchase = _rows(engine, RewardPurchase, a)[0]
+    with Session(engine) as db, db.begin():
+        db.add(ClassroomMembership(
+            id=uuid.uuid4(), classroom_id=a, user_id=assistant,
+            role="assistant", created_by_user_id=owner,
+        ))
+
+    assert _refund(outsider_client, a, student, purchase.id).status_code == 404
+    assert _refund(assistant_client, a, student, purchase.id).status_code == 403
+    assert _refund(client, a, foreign_student, purchase.id).status_code == 404
+    assert _refund(client, a, other_student, purchase.id).status_code == 404
+    assert _refund(client, b, foreign_student, purchase.id).status_code == 404
+    url = f"/classrooms/{a}/students/{student}/reward-purchases/{purchase.id}/refund"
+    bad_csrf = client.post(url, data={
+        "note": "Mistake", "request_id": str(uuid.uuid4()), "csrf_token": "invalid",
+    })
+    assert bad_csrf.status_code == 403
+    assert TestClient(app, follow_redirects=False).post(url, data={
+        "note": "Mistake", "request_id": str(uuid.uuid4()), "csrf_token": "invalid",
+    }).status_code == 401
+    assert _refund(client, a, student, purchase.id, note="  ").status_code == 400
+    assert len(_rows(engine, FinancialRequest, a)) == 1
+    assert len(_rows(engine, FinancialTransaction, a)) == 1
+    with Session(engine) as db:
+        assert db.get(Enrollment, student).current_balance == 70
+        assert db.get(RewardPurchase, purchase.id).fulfillment_status == "unused"
+
+
+def test_refund_rollback_preserves_original_purchase_and_all_stock(engine):
+    _, owner = _client(engine)
+    classroom = _classroom(engine, owner)
+    student = _enrollment(engine, classroom)
+    reward = _reward(engine, classroom, stock=2, owner=owner)
+    with Session(engine) as db, db.begin():
+        outcome = post_reward_purchase(
+            db, actor_user_id=owner, classroom_id=classroom,
+            enrollment_id=student, reward_id=reward,
+            expected_price=30, request_id=uuid.uuid4(),
+        )
+        purchase_id = outcome.purchase.id
+    refund_id = uuid.uuid4()
+    with pytest.raises(RuntimeError):
+        with Session(engine) as db, db.begin():
+            result = post_reward_refund(
+                db, actor_user_id=owner, classroom_id=classroom,
+                enrollment_id=student, purchase_id=purchase_id,
+                note="Simulated refund crash", request_id=refund_id,
+            )
+            assert result.transaction is not None
+            raise RuntimeError("abort before commit")
+
+    assert len(_rows(engine, FinancialRequest, classroom)) == 1
+    assert len(_rows(engine, FinancialTransaction, classroom)) == 1
+    assert len(_rows(engine, RewardInventoryEvent, classroom)) == 2
+    with Session(engine) as db:
+        assert db.get(Enrollment, student).current_balance == 70
+        assert db.get(Reward, reward).quantity_available == 1
+        assert db.get(RewardPurchase, purchase_id).fulfillment_status == "unused"
+    with Session(engine) as db, db.begin():
+        result = post_reward_refund(
+            db, actor_user_id=owner, classroom_id=classroom,
+            enrollment_id=student, purchase_id=purchase_id,
+            note="Simulated refund crash", request_id=refund_id,
+        )
+        assert result.transaction is not None
+    assert len(_rows(engine, FinancialTransaction, classroom)) == 2
+    with Session(engine) as db:
+        assert db.get(Enrollment, student).current_balance == 100
+        assert db.get(Reward, reward).quantity_available == 2
+
+
+def test_refund_rejects_incompatible_inventory_configuration_without_partial_credit(engine):
+    _, owner = _client(engine)
+    classroom = _classroom(engine, owner)
+    student = _enrollment(engine, classroom)
+    reward = _reward(engine, classroom, stock=1, owner=owner)
+    with Session(engine) as db, db.begin():
+        result = post_reward_purchase(
+            db, actor_user_id=owner, classroom_id=classroom,
+            enrollment_id=student, reward_id=reward,
+            expected_price=30, request_id=uuid.uuid4(),
+        )
+        purchase_id = result.purchase.id
+    with Session(engine) as db, db.begin():
+        record = db.get(Reward, reward)
+        record.inventory_tracking = False
+        record.quantity_available = None
+
+    with pytest.raises(FinancialIntegrityError):
+        with Session(engine) as db, db.begin():
+            post_reward_refund(
+                db, actor_user_id=owner, classroom_id=classroom,
+                enrollment_id=student, purchase_id=purchase_id,
+                note="Cannot restore disabled stock", request_id=uuid.uuid4(),
+            )
+    with Session(engine) as db:
+        assert db.get(Enrollment, student).current_balance == 70
+        assert db.get(RewardPurchase, purchase_id).fulfillment_status == "unused"
+    assert len(_rows(engine, FinancialTransaction, classroom)) == 1
+
+
+def test_refund_rejected_if_refunded_balance_would_overflow_integer_range(engine):
+    _, owner = _client(engine)
+    classroom = _classroom(engine, owner)
+    student = _enrollment(engine, classroom)
+    reward = _reward(engine, classroom)
+    with Session(engine) as db, db.begin():
+        result = post_reward_purchase(
+            db, actor_user_id=owner, classroom_id=classroom,
+            enrollment_id=student, reward_id=reward,
+            expected_price=30, request_id=uuid.uuid4(),
+        )
+        purchase_id = result.purchase.id
+    with Session(engine) as db, db.begin():
+        db.get(Enrollment, student).current_balance = 2**31 - 10
+    with Session(engine) as db, db.begin():
+        refund = post_reward_refund(
+            db, actor_user_id=owner, classroom_id=classroom,
+            enrollment_id=student, purchase_id=purchase_id,
+            note="Overflow guard", request_id=uuid.uuid4(),
+        )
+        assert refund.rejection_code == "balance_out_of_range"
+    with Session(engine) as db:
+        assert db.get(Enrollment, student).current_balance == 2**31 - 10
+        assert db.get(RewardPurchase, purchase_id).fulfillment_status == "unused"
+    assert len(_rows(engine, FinancialTransaction, classroom)) == 1
