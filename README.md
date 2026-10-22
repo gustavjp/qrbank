@@ -144,6 +144,17 @@ that change no points remain visible. Linked ledger changes and any later
 financial reversal are labeled, but a reversal does not erase a recorded
 behavior event. This reporting page cannot write ledger or behavior records.
 
+Use **Download matching behavior events (CSV)** to export every event matching
+the selected student, behavior type, and classroom-local date range; the
+50-event on-screen page limit does not apply. Columns include immutable event
+IDs, stored action/reason snapshots, event and financial notes, UTC and local
+timestamps, the linked posted integer point amount (if any), and whether its
+points were reversed. Zero-point behavior events remain included. Student
+codes tied to ledger transactions use their historical financial snapshots.
+CSV exports require classroom membership, recheck it inside a read-only
+repeatable-read PostgreSQL transaction, escape spreadsheet formulas in text,
+and do not modify balances or history. Treat student codes as text on import.
+
 ## Production security defaults
 
 - passwords are Argon2-hashed

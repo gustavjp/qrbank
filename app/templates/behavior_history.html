@@ -38,6 +38,8 @@
 <p><strong>{{ total_count }}</strong> total · <strong>{{ positive_count }}</strong> positive · <strong>{{ negative_count }}</strong> negative</p>
 <p class="muted">Counts include all pages and behavior events without point changes. Reversing points does not erase a recorded behavior event.</p>
 
+<p><a href="{{ export_url }}">Download matching behavior events (CSV)</a></p>
+
 <h2>Events{% if rows %} ({{ rows|length }} on this page){% endif %}</h2>
 {% if rows %}
   <div style="display:grid; gap:.65rem;">
