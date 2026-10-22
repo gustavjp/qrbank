@@ -38,6 +38,7 @@ The current application includes:
 - eight-week classroom-local positive/negative behavior trend chart using the same authorized student/type/date filters
 - classroom-scoped job definitions with audited create/edit/deactivate/reactivate and nonnegative weekly wages
 - classroom-scoped student job assignments with duplicate-active prevention, end dates, and durable audit history
+- classroom-scoped rewards catalog with positive integer prices, reward types, active/inactive status, and audited create/edit/status changes
 - classroom-configured positive/negative behavior reasons and audited post-scan reason/detail attachment, without financial ledger mutation
 - classroom-wide read-only ledger browsing with tenant-bound student/type/source/category/local-date filters and stable keyset pagination
 - authorized streaming CSV export of all filtered posted ledger entries, with immutable identifiers, numeric balances, local/UTC timestamps, and spreadsheet formula safeguards
@@ -49,7 +50,7 @@ The current application includes:
 - health and readiness endpoints
 - PostgreSQL-backed automated tests
 
-Weekly job wages and student allowances have external scheduler commands, but no scheduler is provisioned or enabled automatically. Mobile camera integration, rewards UI, password reset, and a production email provider are not implemented yet. Scan Mode can post QR Action/Quick Action transactions to the ledger.
+Weekly job wages and student allowances have external scheduler commands, but no scheduler is provisioned or enabled automatically. Reward purchasing, inventory adjustments, reward images, mobile camera integration, password reset, and a production email provider are not implemented yet. Scan Mode can post QR Action/Quick Action transactions to the ledger.
 
 ## Local setup
 
@@ -135,6 +136,23 @@ export never changes any balance, ledger row, or enrollment.
 
 When importing into spreadsheet software, treat student codes as text to
 preserve leading zeros such as `01`.
+
+## Classroom rewards catalog
+
+Owners and teachers can create, edit, deactivate and reactivate reward definitions
+from the classroom's Rewards page. A reward has a classroom-scoped code (for
+example, R01), name, optional description, type (Physical, Privilege, Other),
+and a positive integer price. Assistants can browse the catalog but cannot
+change it. Inactive rewards remain visible for historical continuity.
+All meaningful changes create before/after administrative audit entries.
+Duplicate reward codes are rejected within a classroom but may be reused
+by an unrelated classroom.
+
+Catalog operations only update reward definitions and audit events. They
+never deduct balances, create FinancialRequests, or post financial ledger
+transactions. Purchasing and redemption, optional inventory, availability
+dates, and image uploads are separate milestones; a reward cannot be purchased
+through these catalog pages yet.
 
 ## Classroom jobs
 

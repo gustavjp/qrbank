@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block title %}Classroom Rewards · {{ classroom.name }} · QRBank{% endblock %}
+{% block content %}
+<p><a href="/classrooms/{{ classroom.id }}">← {{ classroom.name }}</a></p>
+<h1>Classroom Rewards</h1>
+<p class="muted">Define classroom rewards and their point prices. Configuring a reward does not deduct points or create a purchase. Checkout, inventory management, and images will be added separately.</p>
+
+<h2>Rewards</h2>
+{% if rewards %}
+  {% for reward in rewards %}
+  <div style="border-bottom:1px solid #dfe5ec; padding:.6rem 0;">
+    <strong>{{ reward.reward_code }} — {{ reward.name }}</strong>
+    <div>{{ reward.price_points }} points · {{ reward.reward_type|title }} · {{ "Active" if reward.active else "Inactive" }}</div>
+    {% if reward.description %}<p class="muted">{{ reward.description }}</p>{% endif %}
+    {% if can_manage %}
+      <a href="/classrooms/{{ classroom.id }}/rewards/{{ reward.id }}/edit">Edit</a>
+      <form style="display:inline" method="post" action="/classrooms/{{ classroom.id }}/rewards/{{ reward.id }}/active">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <input type="hidden" name="active" value="{{ 'false' if reward.active else 'true' }}">
+        <button class="secondary" type="submit">{{ "Deactivate" if reward.active else "Reactivate" }}</button>
+      </form>
+    {% endif %}
+  </div>
+  {% endfor %}
+{% else %}<p>No classroom rewards configured yet.</p>{% endif %}
+
+{% if can_manage %}
+<h2>Create Reward</h2>
+<form method="post" action="/classrooms/{{ classroom.id }}/rewards/new">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+  <label>Reward code <input name="code" required maxlength="32" placeholder="R01"></label>
+  <label>Name <input name="name" required maxlength="120" placeholder="Choose Your Seat"></label>
+  <label>Type
+    <select name="reward_type" required>
+      <option value="physical">Physical item</option>
+      <option value="privilege">Privilege</option>
+      <option value="other">Other</option>
+    </select>
+  </label>
+  <label>Price (points) <input type="number" name="price_points" required min="1" max="2147483647" value="25"></label>
+  <label>Description (optional) <textarea name="description" maxlength="2000" rows="3"></textarea></label>
+  <button class="primary" type="submit">Create Reward</button>
+</form>
+{% endif %}
+{% endblock %}
