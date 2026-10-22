@@ -1,11 +1,12 @@
-name: Migration tests
+name: Backend PostgreSQL tests
 
 on:
   push:
     branches:
-      - migration-implementation
+      - main
   pull_request:
     paths:
+      - "app/**"
       - "alembic.ini"
       - "pyproject.toml"
       - "migrations/**"
@@ -13,7 +14,7 @@ on:
       - ".github/workflows/migration-tests.yml"
 
 jobs:
-  postgres-migrations:
+  postgres-backend:
     runs-on: ubuntu-latest
 
     services:
@@ -42,13 +43,13 @@ jobs:
           cache: pip
       - name: Install dependencies
         run: python -m pip install -e ".[dev]"
-      - name: Compile migration Python
-        run: python -m compileall migrations tests
+      - name: Compile Python
+        run: python -m compileall app migrations tests
       - name: Upgrade to head
         run: alembic upgrade head
       - name: Development downgrade to base
         run: alembic downgrade base
       - name: Upgrade to head again
         run: alembic upgrade head
-      - name: Run migration constraint tests
+      - name: Run test suite
         run: pytest

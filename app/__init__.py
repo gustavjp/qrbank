@@ -1,0 +1,1 @@
+"""QRBank application package."""
