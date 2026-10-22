@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% block title %}Reward Fulfillment · {{ classroom.name }} · QRBank{% endblock %}
+{% block content %}
+<p><a href="/classrooms/{{ classroom.id }}/rewards">← Classroom Rewards</a></p>
+<h1>Reward Purchases &amp; Fulfillment</h1>
+<p class="muted">Redeeming or reopening a reward changes its fulfillment status and appends an audit event. It does not change student balances, financial transactions, or inventory. Refunds are handled separately on the student's page.</p>
+{% if changed %}<p class="success">Fulfillment status changed and recorded in the audit history.</p>{% endif %}
+
+<p>
+  Show:
+  {% for status in ("all", "unused", "redeemed", "cancelled") %}
+    <a href="/classrooms/{{ classroom.id }}/reward-purchases?show={{ status }}">{{ status|title }}</a>{% if not loop.last %} · {% endif %}
+  {% endfor %}
+</p>
+
+{% if records %}
+  {% for purchase, student_code in records %}
+    <div style="border:1px solid #dfe5ec; border-radius:8px; padding:1rem; margin:1rem 0;">
+      <strong>{{ purchase.reward_code_snapshot }} — {{ purchase.reward_name_snapshot }}</strong>
+      <div><a href="/classrooms/{{ classroom.id }}/students/{{ purchase.enrollment_id }}">Student {{ student_code }}</a> · {{ purchase.price_snapshot }} points · {{ purchase.fulfillment_status|title }}</div>
+      <div class="muted">Purchased {{ purchase.purchased_at.strftime("%Y-%m-%d %H:%M UTC") }}</div>
+
+      {% if can_manage and purchase.fulfillment_status in ("unused", "redeemed") %}
+        <form method="post" action="/classrooms/{{ classroom.id }}/reward-purchases/{{ purchase.id }}/fulfill">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <input type="hidden" name="enrollment_id" value="{{ purchase.enrollment_id }}">
+          <input type="hidden" name="expected_event_id" value="{{ latest_event_ids[purchase.id] }}">
+          <input type="hidden" name="target_status" value="{{ 'redeemed' if purchase.fulfillment_status == 'unused' else 'unused' }}">
+          <label>{{ "Redemption note (optional)" if purchase.fulfillment_status == "unused" else "Reason for reopening (required)" }}
+            <input name="note" type="text" maxlength="500" {% if purchase.fulfillment_status == "redeemed" %}required{% endif %}>
+          </label>
+          <button class="secondary" type="submit">{{ "Mark redeemed" if purchase.fulfillment_status == "unused" else "Reopen reward" }}</button>
+        </form>
+      {% endif %}
+
+      <details>
+        <summary>Fulfillment audit history</summary>
+        <ul>
+          {% for event in events_by_purchase[purchase.id] %}
+            <li>
+              {{ event.to_status|title }} · {{ event.occurred_at.strftime("%Y-%m-%d %H:%M UTC") }}
+              · {{ actors.get(event.actor_user_id, "System") }}
+              {% if event.note %}· {{ event.note }}{% endif %}
+            </li>
+          {% endfor %}
+        </ul>
+      </details>
+    </div>
+  {% endfor %}
+{% else %}
+  <p class="muted">No reward purchases with this status.</p>
+{% endif %}
+{% endblock %}
