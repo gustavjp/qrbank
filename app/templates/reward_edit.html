@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block title %}Edit {{ reward.reward_code }} · QRBank{% endblock %}
+{% block content %}
+<p><a href="/classrooms/{{ classroom.id }}/rewards">← Classroom Rewards</a></p>
+<h1>Edit {{ reward.reward_code }}</h1>
+<p class="muted">Editing a reward never changes balances or historical transactions. Inactive rewards remain visible.</p>
+<form method="post" action="/classrooms/{{ classroom.id }}/rewards/{{ reward.id }}/edit">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+  <label>Reward code <input name="code" required maxlength="32" value="{{ reward.reward_code }}"></label>
+  <label>Name <input name="name" required maxlength="120" value="{{ reward.name }}"></label>
+  <label>Type
+    <select name="reward_type" required>
+      <option value="physical" {% if reward.reward_type == 'physical' %}selected{% endif %}>Physical item</option>
+      <option value="privilege" {% if reward.reward_type == 'privilege' %}selected{% endif %}>Privilege</option>
+      <option value="other" {% if reward.reward_type == 'other' %}selected{% endif %}>Other</option>
+    </select>
+  </label>
+  <label>Price (points) <input type="number" name="price_points" required min="1" max="2147483647" value="{{ reward.price_points }}"></label>
+  <label>Description <textarea name="description" maxlength="2000" rows="3">{{ reward.description or '' }}</textarea></label>
+  <button class="primary" type="submit">Save Reward</button>
+</form>
+{% endblock %}

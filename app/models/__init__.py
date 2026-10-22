@@ -7,6 +7,7 @@ from app.models.base import Base
 from app.models.classroom import Classroom, ClassroomMembership, ClassroomSettings
 from app.models.financial import FinancialRequest, FinancialTransaction
 from app.models.job import Job, JobAssignment
+from app.models.reward import Reward
 from app.models.student import Enrollment, Student
 
 __all__ = [
@@ -26,6 +27,7 @@ __all__ = [
     "Job",
     "JobAssignment",
     "QuickAction",
+    "Reward",
     "ScheduledPayment",
     "Student",
     "User",
