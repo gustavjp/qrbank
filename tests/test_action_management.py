@@ -171,6 +171,7 @@ def test_duplicate_codes_and_invalid_action_values_rollback(engine) -> None:
     assert _new_action(client, classroom_id, code="a01").status_code == 409
     assert _new_action(client, classroom_id, code="bad code").status_code == 400
     assert _new_action(client, classroom_id, code="A09", amount=2**31).status_code == 400
+    assert _new_action(client, classroom_id, code="A10", amount=-(2**31)).status_code == 400
 
     with Session(engine) as db:
         assert db.scalar(select(func.count()).select_from(Action).where(

@@ -19,7 +19,7 @@ from app.services.classrooms import (
 CODE_PATTERN = re.compile(r"^[A-Z0-9_-]{1,32}$")
 ACTION_KINDS = {"general", "behavior_positive", "behavior_negative"}
 MANAGER_ROLES = {"owner", "teacher"}
-INTEGER_MIN = -(2**31)
+INTEGER_MIN = -(2**31 - 1)
 INTEGER_MAX = 2**31 - 1
 
 
@@ -61,7 +61,7 @@ def _description(value: str | None) -> str | None:
 
 def _validate_amount(amount: int) -> int:
     if type(amount) is not int or not INTEGER_MIN <= amount <= INTEGER_MAX:
-        raise ActionValidationError("amount must be a 32-bit signed integer")
+        raise ActionValidationError("amount must fit a signed integer and support an opposite reversal")
     return amount
 
 
