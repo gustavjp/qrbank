@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import re
+import time
 import uuid
+
+import pytest
 from concurrent.futures import ThreadPoolExecutor
 from threading import Barrier
 
@@ -21,6 +24,7 @@ from app.services.auth import (
 )
 from app.services.classrooms import create_classroom_for_owner
 from app.services.financial import post_scanned_action
+from app.services.scan_selection import issue_selection_token, verify_selection_token, SelectionExpiredError
 from app.services.students import create_student_enrollment
 
 
@@ -76,9 +80,15 @@ def _request_id(page):
     return match.group(1)
 
 
-def _execute(client, classroom_id, payload, student_id, request_id):
+def _execute(client, classroom_id, payload, student_id, request_id, *, selection_token=None):
+    if student_id and selection_token is None:
+        selection_token = issue_selection_token(
+            session_token=client.cookies.get(settings.session_cookie_name),
+            classroom_id=classroom_id, enrollment_id=student_id,
+        )
     return client.post(f"/classrooms/{classroom_id}/scan/execute", data={
         "payload": payload, "selected_enrollment_id": str(student_id) if student_id else "",
+        "selection_token": selection_token or "",
         "request_id": str(request_id), "csrf_token": _csrf(client),
     })
 
@@ -430,3 +440,142 @@ def test_preloaded_enrollment_is_refreshed_after_row_lock(engine):
     with Session(engine) as db:
         assert db.get(Enrollment, student_id).current_balance == 10
         assert [tx.amount for tx in _ledger(db, student_id)] == [5, 5]
+
+
+def test_student_scan_issues_bound_selection_token_before_financial_action(engine):
+    client, owner = _actor(engine)
+    classroom_id = _classroom(engine, owner)
+    student_id = _student(engine, owner, classroom_id)
+    page = _start(client, classroom_id)
+    selected = _execute(client, classroom_id, "STUDENT:01", None, _request_id(page))
+    assert selected.status_code == 200
+    assert 'data-tone="student"' in selected.text
+    assert "Selection expires in" in selected.text or 'id="selection-countdown"' in selected.text
+    match = re.search(r'name="selection_token" value="([^"]+)"', selected.text)
+    assert match and match.group(1)
+    token = match.group(1)
+    verify_selection_token(
+        session_token=client.cookies.get(settings.session_cookie_name),
+        classroom_id=classroom_id, enrollment_id=student_id,
+        selection_token=token, timeout_seconds=120,
+    )
+    posted = _execute(
+        client, classroom_id, "QUICK:QA1", student_id, uuid.uuid4(),
+        selection_token=token,
+    )
+    assert posted.status_code == 200
+    assert 'data-tone="success"' in posted.text
+    assert 'id="selection-countdown"' in posted.text
+
+
+def test_selection_token_rejects_tampering_wrong_student_or_expiry(engine):
+    client, owner = _actor(engine)
+    classroom_id = _classroom(engine, owner)
+    first_student = _student(engine, owner, classroom_id, "01")
+    second_student = _student(engine, owner, classroom_id, "02")
+    _start(client, classroom_id)
+    token = issue_selection_token(
+        session_token=client.cookies.get(settings.session_cookie_name),
+        classroom_id=classroom_id, enrollment_id=first_student,
+    )
+    wrong_student = _execute(
+        client, classroom_id, "ACTION:A01", second_student, uuid.uuid4(),
+        selection_token=token,
+    )
+    assert wrong_student.status_code == 409
+    forged = _execute(
+        client, classroom_id, "ACTION:A01", first_student, uuid.uuid4(),
+        selection_token=token[:-1] + ("a" if token[-1] != "a" else "b"),
+    )
+    assert forged.status_code == 409
+    old_token = issue_selection_token(
+        session_token=client.cookies.get(settings.session_cookie_name),
+        classroom_id=classroom_id, enrollment_id=first_student,
+        now=int(time.time()) - 121,
+    )
+    expired = _execute(
+        client, classroom_id, "ACTION:A01", first_student, uuid.uuid4(),
+        selection_token=old_token,
+    )
+    assert expired.status_code == 409
+    assert "student selection expired" in expired.text
+    with Session(engine) as db:
+        assert db.get(Enrollment, first_student).current_balance == 0
+        assert db.get(Enrollment, second_student).current_balance == 0
+        assert not _ledger(db, first_student)
+        assert not _ledger(db, second_student)
+
+
+def test_selection_signature_is_bound_to_session_classroom_and_deadline():
+    classroom_id, another_classroom = uuid.uuid4(), uuid.uuid4()
+    enrollment_id, another_student = uuid.uuid4(), uuid.uuid4()
+    token = issue_selection_token(
+        session_token="session-one", classroom_id=classroom_id,
+        enrollment_id=enrollment_id, now=1000,
+    )
+    assert verify_selection_token(
+        session_token="session-one", classroom_id=classroom_id,
+        enrollment_id=enrollment_id, selection_token=token,
+        timeout_seconds=10, now=1009,
+    ) == 1010
+    cases = [
+        dict(session_token="session-two", classroom_id=classroom_id,
+             enrollment_id=enrollment_id, now=1002),
+        dict(session_token="session-one", classroom_id=another_classroom,
+             enrollment_id=enrollment_id, now=1002),
+        dict(session_token="session-one", classroom_id=classroom_id,
+             enrollment_id=another_student, now=1002),
+        dict(session_token="session-one", classroom_id=classroom_id,
+             enrollment_id=enrollment_id, now=1010),
+        dict(session_token="session-one", classroom_id=classroom_id,
+             enrollment_id=enrollment_id, now=999),
+    ]
+    for kwargs in cases:
+        with pytest.raises(SelectionExpiredError):
+            verify_selection_token(
+                **kwargs, selection_token=token, timeout_seconds=10,
+            )
+
+
+def test_expired_confirm_form_never_posts_even_if_preview_was_valid(engine):
+    client, owner = _actor(engine)
+    classroom_id = _classroom(engine, owner)
+    student_id = _student(engine, owner, classroom_id)
+    with Session(engine) as db, db.begin():
+        row = db.get(ClassroomSettings, classroom_id)
+        row.confirm_normal_transactions = True
+        row.student_selection_timeout_seconds = 5
+    page = _start(client, classroom_id)
+    preview = _execute(client, classroom_id, "ACTION:A01", student_id, _request_id(page))
+    assert preview.status_code == 200 and "Confirm and post" in preview.text
+    fields = dict(re.findall(r'<input type="hidden" name="([^"]+)" value="([^"]*)"', preview.text))
+    fields["selection_token"] = issue_selection_token(
+        session_token=client.cookies.get(settings.session_cookie_name),
+        classroom_id=classroom_id, enrollment_id=student_id,
+        now=int(time.time()) - 6,
+    )
+    denied = client.post(f"/classrooms/{classroom_id}/scan/confirm", data=fields)
+    assert denied.status_code == 409
+    assert "student selection expired" in denied.text
+    with Session(engine) as db:
+        assert db.get(Enrollment, student_id).current_balance == 0
+        assert not _ledger(db, student_id)
+
+
+def test_sound_setting_is_reflected_in_scanner_page_and_replays_are_quiet(engine):
+    client, owner = _actor(engine)
+    classroom_id = _classroom(engine, owner)
+    student_id = _student(engine, owner, classroom_id)
+    page = _start(client, classroom_id)
+    assert 'data-sound-enabled="1"' in page.text
+    request_id = uuid.uuid4()
+    posted = _execute(client, classroom_id, "ACTION:A01", student_id, request_id)
+    replay = _execute(client, classroom_id, "ACTION:A01", student_id, request_id)
+    assert 'data-tone="success"' in posted.text
+    assert 'data-tone="none"' in replay.text
+    with Session(engine) as db, db.begin():
+        db.get(ClassroomSettings, classroom_id).sound_enabled = False
+    disabled = client.get(f"/classrooms/{classroom_id}/scan")
+    assert disabled.status_code == 200
+    assert 'data-sound-enabled="0"' in disabled.text
+    assert "Sound feedback is disabled" in disabled.text
