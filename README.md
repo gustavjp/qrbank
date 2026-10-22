@@ -34,6 +34,7 @@ The current application includes:
 - classroom-scoped student codes with active/inactive status
 - atomic manual credit/deduction flow with required reason, category, idempotency, and behavior-event linkage
 - per-student ledger history with category, note, source, and balances
+- classroom-wide read-only ledger browsing with tenant-bound student/type/source/category/local-date filters and stable keyset pagination
 - audited set-balance adjustments (server-computed difference) and append-only transaction reversals
 - exact inverse reversals, reversal-of-reversal support, and duplicate undo protection
 - central opening-balance, QR Action, and manual financial posting services with PostgreSQL row locking and idempotency
