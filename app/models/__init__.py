@@ -1,4 +1,5 @@
 from app.models.action import Action, QuickAction
+from app.models.automation import AutomationRun, ScheduledPayment
 from app.models.audit import AdminAuditEvent
 from app.models.behavior import BehaviorEvent, BehaviorReason
 from app.models.auth import AuthToken, User, UserSession
@@ -11,6 +12,7 @@ from app.models.student import Enrollment, Student
 __all__ = [
     "Action",
     "AdminAuditEvent",
+    "AutomationRun",
     "AuthToken",
     "Base",
     "BehaviorEvent",
@@ -24,6 +26,7 @@ __all__ = [
     "Job",
     "JobAssignment",
     "QuickAction",
+    "ScheduledPayment",
     "Student",
     "User",
     "UserSession",

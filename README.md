@@ -49,7 +49,7 @@ The current application includes:
 - health and readiness endpoints
 - PostgreSQL-backed automated tests
 
-Automatic wage payments, mobile camera integration, rewards UI, scheduled payments, password reset, and a production email provider are not implemented yet. Scan Mode can post QR Action/Quick Action transactions to the ledger.
+Weekly job wages have an external scheduler command, but no scheduler is provisioned or enabled automatically. Weekly allowances, mobile camera integration, rewards UI, password reset, and a production email provider are not implemented yet. Scan Mode can post QR Action/Quick Action transactions to the ledger.
 
 ## Local setup
 
@@ -154,9 +154,33 @@ new assignments, but their existing assignments can still be ended. Meaningful
 assignment creation/end changes are administratively audited, and assistants
 have read-only access.
 
-Job assignments do not pay wages or modify balances. Automatic weekly wage
-transactions will be introduced separately through the central financial
-service, with PostgreSQL idempotency and append-only ledger guarantees.
+Job assignment changes do not directly pay wages or modify balances. When weekly
+wages are enabled in classroom settings, the independent scheduler command can
+pay active assignments after the classroom-local weekly due time (default Monday
+6:10 AM, America/New_York). Each assignment gets a distinct wage transaction,
+with its job name, code, and wage snapshotted in the append-only ledger.
+Payments use the central financial service with PostgreSQL enrollment row locks,
+per-assignment/week request idempotency, and unique ScheduledPayment records.
+Zero wages consume the week without adding a fake zero-point ledger transaction.
+
+Invoke from a trusted external scheduler rather than a FastAPI web worker:
+
+```bash
+python -m app.tasks.weekly_wages
+```
+
+Run the command periodically (for example, every ten minutes) using a platform
+cron job. Each invocation checks the classroom's own IANA timezone and schedule,
+and pays only when the current local week's due time has passed. Repeated and
+concurrent invocations cannot double-pay the same assignment/week. New jobs or
+students created after that week's deadline are not backpaid for that week;
+inactive or ended assignments and inactive jobs/students are skipped. A failure
+for one student rolls back that student's payment but does not stop the others;
+subsequent invocations retry missing payments. A nonzero command exit status
+indicates that some payments failed and should trigger an operational alert.
+
+No automatic task is installed by this code alone. Enable and monitor the
+external scheduler before relying on weekly wages in a live classroom.
 
 ## Weekly behavior analytics
 
