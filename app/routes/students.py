@@ -4,13 +4,14 @@ import re
 import uuid
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request, status
-from fastapi.responses import RedirectResponse
+from fastapi.responses import RedirectResponse, StreamingResponse
+from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.auth_context import current_user_from_request
 from app.csrf import csrf_token_for_request, set_csrf_cookie, validate_csrf
-from app.database import get_db
+from app.database import SessionLocal, get_db
 from app.services.classrooms import (
     ClassroomNotFoundError,
     ClassroomPermissionError,
@@ -27,6 +28,7 @@ from app.services.financial import (
     post_balance_adjustment,
     post_transaction_reversal,
 )
+from app.services.roster_exports import iter_classroom_roster_csv
 from app.services.students import (
     STUDENT_MANAGER_ROLES,
     StudentNotFoundError,
@@ -35,6 +37,7 @@ from app.services.students import (
     get_enrollment,
     list_enrollment_transactions,
     list_enrollments,
+    select_classroom_enrollments,
     set_enrollment_active,
     update_student_enrollment,
 )
@@ -100,8 +103,55 @@ def student_list(
             "classroom": access.classroom,
             "access": access,
             "rows": rows,
-            "show": show,
+            "show": "active" if show == "active" else "all",
             "can_manage": access.membership.role in STUDENT_MANAGER_ROLES,
+        },
+    )
+
+
+@router.get("/export.csv")
+def export_student_roster(
+    classroom_id: uuid.UUID,
+    request: Request,
+    show: str = "all",
+    db: Session = Depends(get_db),
+):
+    user = current_user_from_request(request, db)
+    if user is None:
+        return RedirectResponse("/auth/login", status_code=status.HTTP_303_SEE_OTHER)
+    if show not in {"active", "all"}:
+        raise HTTPException(status_code=400, detail="show must be active or all")
+
+    selection_args = {
+        "user_id": user.id,
+        "classroom_id": classroom_id,
+        "include_inactive": show == "all",
+    }
+    try:
+        # Reject unauthorized requests before any download bytes are sent.
+        select_classroom_enrollments(db, **selection_args)
+    except ClassroomNotFoundError:
+        raise _not_found()
+
+    def generate_csv():
+        # Streaming has its own session, avoiding a closed request dependency.
+        with SessionLocal() as export_db, export_db.begin():
+            export_db.execute(text(
+                "SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY"
+            ))
+            # Recheck membership inside a transaction-consistent snapshot.
+            selection = select_classroom_enrollments(export_db, **selection_args)
+            yield from iter_classroom_roster_csv(export_db, selection)
+
+    return StreamingResponse(
+        generate_csv(),
+        media_type="text/csv; charset=utf-8",
+        headers={
+            "Content-Disposition": (
+                f'attachment; filename="qrbank-classroom-{classroom_id}-roster.csv"'
+            ),
+            "Cache-Control": "private, no-store",
+            "X-Content-Type-Options": "nosniff",
         },
     )
 

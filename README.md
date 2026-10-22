@@ -36,6 +36,7 @@ The current application includes:
 - per-student ledger history with category, note, source, and balances
 - classroom-wide read-only ledger browsing with tenant-bound student/type/source/category/local-date filters and stable keyset pagination
 - authorized streaming CSV export of all filtered posted ledger entries, with immutable identifiers, numeric balances, local/UTC timestamps, and spreadsheet formula safeguards
+- authorized classroom roster/balance CSV export with active/all selection, integer balances, enrollment status and dates, and spreadsheet formula safeguards
 - audited set-balance adjustments (server-computed difference) and append-only transaction reversals
 - exact inverse reversals, reversal-of-reversal support, and duplicate undo protection
 - central opening-balance, QR Action, and manual financial posting services with PostgreSQL row locking and idempotency
@@ -114,6 +115,21 @@ do not appear in the ledger export. Exports are read-only, membership-authorized
 and generated from a consistent PostgreSQL snapshot; dangerous spreadsheet
 formula prefixes in text fields are escaped. Student codes such as `01` should
 be imported as text to preserve leading zeros in spreadsheet software.
+
+## Classroom roster and balance CSV export
+
+On a classroom's Students page, select **Active only** or **All**, then use
+**Download roster and balances (CSV)**. The active view exports active
+enrollments only; the full view includes inactive enrollments and their
+preserved balances. The data includes classroom, student, and enrollment IDs,
+student code, optional display name, active state, exact integer balance, and
+enrollment start/end dates. Private notes are intentionally excluded.
+Exports use a read-only, repeatable-read PostgreSQL snapshot, recheck active
+membership, and escape spreadsheet formula prefixes in text cells. The
+export never changes any balance, ledger row, or enrollment.
+
+When importing into spreadsheet software, treat student codes as text to
+preserve leading zeros such as `01`.
 
 ## Production security defaults
 

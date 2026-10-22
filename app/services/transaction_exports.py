@@ -9,6 +9,7 @@ from zoneinfo import ZoneInfo
 from sqlalchemy.orm import Session
 
 from app.models.financial import FinancialTransaction
+from app.services.csv_security import safe_spreadsheet_text
 from app.services.transaction_history import TransactionHistorySelection
 
 
@@ -25,40 +26,29 @@ CSV_COLUMNS = (
 )
 
 
-def _safe_text(value: str | None) -> str:
-    """Keep untrusted ledger text inert when a CSV is opened in a spreadsheet."""
-    if value is None:
-        return ""
-    if value.startswith(("\t", "\r", "\n")) or value.lstrip(
-        " \t\r\n\ufeff\u200b"
-    ).startswith(("=", "+", "-", "@")):
-        return "'" + value
-    return value
-
-
 def _transaction_cells(tx: FinancialTransaction, zone: ZoneInfo, timezone_name: str) -> tuple:
     return (
         str(tx.id),
         tx.display_number,
         str(tx.classroom_id),
         str(tx.enrollment_id),
-        _safe_text(tx.student_code_snapshot),
+        safe_spreadsheet_text(tx.student_code_snapshot),
         tx.occurred_at.astimezone(timezone.utc).isoformat(),
         tx.occurred_at.astimezone(zone).isoformat(),
-        _safe_text(timezone_name),
-        _safe_text(tx.transaction_type),
-        _safe_text(tx.source),
+        safe_spreadsheet_text(timezone_name),
+        safe_spreadsheet_text(tx.transaction_type),
+        safe_spreadsheet_text(tx.source),
         tx.amount,
         tx.balance_before,
         tx.balance_after,
-        _safe_text(tx.manual_category),
-        _safe_text(tx.note),
+        safe_spreadsheet_text(tx.manual_category),
+        safe_spreadsheet_text(tx.note),
         str(tx.action_id) if tx.action_id else "",
-        _safe_text(tx.action_code_snapshot),
-        _safe_text(tx.action_name_snapshot),
-        _safe_text(tx.action_kind_snapshot),
+        safe_spreadsheet_text(tx.action_code_snapshot),
+        safe_spreadsheet_text(tx.action_name_snapshot),
+        safe_spreadsheet_text(tx.action_kind_snapshot),
         str(tx.quick_action_id) if tx.quick_action_id else "",
-        _safe_text(tx.quick_action_code_snapshot),
+        safe_spreadsheet_text(tx.quick_action_code_snapshot),
         tx.adjustment_target_balance if tx.adjustment_target_balance is not None else "",
         str(tx.reverses_transaction_id) if tx.reverses_transaction_id else "",
         str(tx.financial_request_id),
