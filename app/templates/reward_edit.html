@@ -20,5 +20,24 @@
   <label>Description <textarea name="description" maxlength="2000" rows="3">{{ reward.description or '' }}</textarea></label>
   <button class="primary" type="submit">Save Reward</button>
 </form>
+
+<h2>Purchase availability window</h2>
+{% if availability_saved %}<p class="success">Reward purchase window updated and audited.</p>{% endif %}
+<p class="muted">All times use your classroom timezone: <strong>{{ classroom_timezone }}</strong>. Leave either field blank for an open-ended window. The start is inclusive; the end is exclusive. Ambiguous or nonexistent clock-change times are rejected.</p>
+<form method="post" action="/classrooms/{{ classroom.id }}/rewards/{{ reward.id }}/availability">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+  <input type="hidden" name="expected_from" value="{{ reward.available_from.isoformat() if reward.available_from else '' }}">
+  <input type="hidden" name="expected_until" value="{{ reward.available_until.isoformat() if reward.available_until else '' }}">
+  <label>Available starting
+    <input type="datetime-local" name="available_from_local" step="60" value="{{ available_from_local }}">
+  </label>
+  <label>Available until
+    <input type="datetime-local" name="available_until_local" step="60" value="{{ available_until_local }}">
+  </label>
+  <label>Change note (optional)
+    <input type="text" name="note" maxlength="500" placeholder="Why is the window changing?">
+  </label>
+  <button class="primary" type="submit">Save availability window</button>
+</form>
 {% endblock %}
 

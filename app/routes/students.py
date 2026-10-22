@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 import uuid
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request, status
 from fastapi.responses import RedirectResponse, StreamingResponse
@@ -31,6 +32,7 @@ from app.services.financial import (
 from app.services.roster_exports import iter_classroom_roster_csv
 from app.models.reward import Reward
 from app.models.reward_purchase import RewardFulfillmentEvent, RewardPurchase
+from app.services.rewards import reward_availability_status
 from app.services.students import (
     STUDENT_MANAGER_ROLES,
     StudentNotFoundError,
@@ -314,6 +316,10 @@ def _detail_response(
     available_rewards = list(db.scalars(select(Reward).where(
         Reward.classroom_id == classroom_id, Reward.active.is_(True),
     ).order_by(Reward.reward_code))) if can_manage and record.enrollment.active else []
+    availability = {
+        reward.id: reward_availability_status(reward, datetime.now(timezone.utc))
+        for reward in available_rewards
+    }
     reward_purchases = list(db.scalars(select(RewardPurchase).where(
         RewardPurchase.classroom_id == classroom_id,
         RewardPurchase.enrollment_id == enrollment_id,
@@ -344,6 +350,7 @@ def _detail_response(
             "refunded": refunded, "fulfilled": fulfilled,
             "financial_error": financial_error,
             "available_rewards": available_rewards,
+            "availability": availability,
             "reward_purchases": reward_purchases,
             "reward_refund_request_ids": {p.id: uuid.uuid4() for p in reward_purchases},
             "reward_latest_events": reward_latest_events,

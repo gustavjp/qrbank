@@ -133,6 +133,29 @@ def _adjust_stock(
     )
 
 
+def _schedule(
+    engine, client: TestClient, classroom_id: uuid.UUID, reward_id: uuid.UUID,
+    *, start: str = "", end: str = "", note: str = "",
+    expected_from: str | None = None, expected_until: str | None = None,
+):
+    edit_url = f"/classrooms/{classroom_id}/rewards/{reward_id}/edit"
+    client.get(edit_url)
+    with Session(engine) as db:
+        current = db.get(Reward, reward_id)
+        assert current is not None
+        old_from = current.available_from.isoformat() if current.available_from else ""
+        old_until = current.available_until.isoformat() if current.available_until else ""
+    return client.post(
+        f"/classrooms/{classroom_id}/rewards/{reward_id}/availability",
+        data={
+            "available_from_local": start, "available_until_local": end,
+            "expected_from": old_from if expected_from is None else expected_from,
+            "expected_until": old_until if expected_until is None else expected_until,
+            "note": note, "csrf_token": _csrf(client),
+        },
+    )
+
+
 def test_create_catalog_in_two_classes_and_audit_without_financial_entries(engine):
     client, owner = _client(engine)
     a = _classroom(engine, owner)
@@ -565,5 +588,168 @@ def test_inventory_transaction_rollback_reverts_count_and_events(engine):
             raise RuntimeError("abort stock change")
     assert _reward(engine, classroom).quantity_available == 1
     assert len(_inventory_events(engine, reward_id)) == 1
+    assert len(_audit_events(engine, reward_id)) == 2
+
+
+def test_classroom_local_reward_window_is_audited_and_enforced_at_boundaries(engine):
+    client, owner = _client(engine)
+    classroom = _classroom(engine, owner)
+    assert _create(client, classroom).status_code == 303
+    reward_id = _reward(engine, classroom).id
+    student_id, enrollment_id = uuid.uuid4(), uuid.uuid4()
+    with Session(engine) as db, db.begin():
+        db.add(Student(id=student_id, display_name="Schedule Student"))
+        db.flush()
+        db.add(Enrollment(
+            id=enrollment_id, student_id=student_id,
+            classroom_id=classroom, student_code="01",
+            current_balance=100, active=True,
+        ))
+
+    response = _schedule(
+        engine, client, classroom, reward_id,
+        start="2040-01-15T09:00", end="2040-01-15T15:00",
+        note="Seasonal classroom prize",
+    )
+    assert response.status_code == 303
+    assert "availability_saved=1" in response.headers["location"]
+    reward = _reward(engine, classroom)
+    assert reward.available_from == datetime(2040, 1, 15, 14, 0, tzinfo=timezone.utc)
+    assert reward.available_until == datetime(2040, 1, 15, 20, 0, tzinfo=timezone.utc)
+    events = _audit_events(engine, reward_id)
+    assert [event.event_type for event in events] == [
+        "reward_created", "reward_availability_updated",
+    ]
+    assert events[-1].actor_user_id == owner
+    assert events[-1].before_json["available_from"] is None
+    assert events[-1].after_json["reason"] == "Seasonal classroom prize"
+    edit = client.get(f"/classrooms/{classroom}/rewards/{reward_id}/edit")
+    assert edit.status_code == 200
+    assert 'value="2040-01-15T09:00"' in edit.text
+    assert 'value="2040-01-15T15:00"' in edit.text
+    catalog = client.get(f"/classrooms/{classroom}/rewards")
+    assert "Scheduled — purchasing has not started" in catalog.text
+    assert "Purchase for 25 points" not in catalog.text
+    student = client.get(f"/classrooms/{classroom}/students/{enrollment_id}")
+    assert "Scheduled — not yet available" in student.text
+    assert "Purchase for 25 points" not in student.text
+
+    def buy(at: datetime):
+        with Session(engine) as db, db.begin():
+            return post_reward_purchase(
+                db, actor_user_id=owner, classroom_id=classroom,
+                enrollment_id=enrollment_id, reward_id=reward_id,
+                expected_price=25, request_id=uuid.uuid4(), now=at,
+            )
+
+    assert buy(datetime(2040, 1, 15, 13, 59, tzinfo=timezone.utc)).rejection_code == (
+        "not_yet_available"
+    )
+    assert buy(datetime(2040, 1, 15, 14, 0, tzinfo=timezone.utc)).rejection_code is None
+    assert buy(datetime(2040, 1, 15, 20, 0, tzinfo=timezone.utc)).rejection_code == (
+        "no_longer_available"
+    )
+    with Session(engine) as db:
+        assert db.get(Enrollment, enrollment_id).current_balance == 75
+        assert db.scalar(select(func.count()).select_from(FinancialTransaction).where(
+            FinancialTransaction.classroom_id == classroom,
+        )) == 1
+
+
+def test_reward_window_clock_changes_validation_stale_edits_and_clear(engine):
+    client, owner = _client(engine)
+    classroom = _classroom(engine, owner)
+    assert _create(client, classroom).status_code == 303
+    reward_id = _reward(engine, classroom).id
+
+    assert _schedule(
+        engine, client, classroom, reward_id, start="2026-03-08T02:30",
+    ).status_code == 400  # Spring clock jump makes this local time nonexistent.
+    assert _schedule(
+        engine, client, classroom, reward_id, start="2026-11-01T01:30",
+    ).status_code == 400  # Fall clock change makes this local time ambiguous.
+    assert _schedule(
+        engine, client, classroom, reward_id, start="2026-02-30T09:00",
+    ).status_code == 400
+    assert _schedule(
+        engine, client, classroom, reward_id,
+        start="2026-05-06T12:00", end="2026-05-06T12:00",
+    ).status_code == 400
+    assert _schedule(
+        engine, client, classroom, reward_id,
+        start="2026-05-06T13:00", end="2026-05-06T12:00",
+    ).status_code == 400
+    assert len(_audit_events(engine, reward_id)) == 1
+
+    assert _schedule(
+        engine, client, classroom, reward_id,
+        start="2040-06-01T10:00", end="2040-06-01T12:00",
+    ).status_code == 303
+    assert _schedule(
+        engine, client, classroom, reward_id,
+        start="2040-06-01T11:00", end="2040-06-01T12:00",
+        expected_from="", expected_until="",
+    ).status_code == 409
+    assert len(_audit_events(engine, reward_id)) == 2
+
+    # Repeat the current schedule: no administrative change/event.
+    assert _schedule(
+        engine, client, classroom, reward_id,
+        start="2040-06-01T10:00", end="2040-06-01T12:00",
+    ).status_code == 303
+    assert len(_audit_events(engine, reward_id)) == 2
+    assert _schedule(engine, client, classroom, reward_id).status_code == 303
+    reward = _reward(engine, classroom)
+    assert reward.available_from is None and reward.available_until is None
+    assert len(_audit_events(engine, reward_id)) == 3
+
+
+def test_reward_window_permissions_tenant_isolation_and_csrf(engine):
+    owner_client, owner = _client(engine)
+    teacher_client, teacher = _client(engine)
+    assistant_client, assistant = _client(engine)
+    outside_client, outsider = _client(engine)
+    classroom = _classroom(engine, owner)
+    outside_classroom = _classroom(engine, outsider)
+    assert _create(owner_client, classroom).status_code == 303
+    assert _create(outside_client, outside_classroom, code="R02").status_code == 303
+    reward_id = _reward(engine, classroom).id
+    foreign_reward = _reward(engine, outside_classroom, "R02").id
+    with Session(engine) as db, db.begin():
+        db.add_all([
+            ClassroomMembership(
+                id=uuid.uuid4(), classroom_id=classroom,
+                user_id=teacher, role="teacher", created_by_user_id=owner,
+            ),
+            ClassroomMembership(
+                id=uuid.uuid4(), classroom_id=classroom,
+                user_id=assistant, role="assistant", created_by_user_id=owner,
+            ),
+        ])
+    assert _schedule(
+        engine, teacher_client, classroom, reward_id,
+        start="2040-01-01T09:00",
+    ).status_code == 303
+    assert _schedule(
+        engine, assistant_client, classroom, reward_id,
+        start="2040-02-01T09:00",
+    ).status_code == 403
+    assert _schedule(
+        engine, outside_client, classroom, reward_id,
+        start="2040-02-01T09:00",
+    ).status_code == 404
+    assert _schedule(
+        engine, owner_client, classroom, foreign_reward,
+        start="2040-02-01T09:00",
+    ).status_code == 404
+    url = f"/classrooms/{classroom}/rewards/{reward_id}/availability"
+    assert owner_client.post(url, data={
+        "available_from_local": "2040-01-01T09:00",
+        "csrf_token": "invalid",
+    }).status_code == 403
+    assert TestClient(app, follow_redirects=False).post(url, data={
+        "available_from_local": "2040-01-01T09:00",
+        "csrf_token": "invalid",
+    }).status_code == 401
     assert len(_audit_events(engine, reward_id)) == 2
 
