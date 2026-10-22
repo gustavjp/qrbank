@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block title %}Check your email · QRBank{% endblock %}
+{% block content %}
+<h1>Check your email</h1>
+<p>If the address is awaiting verification, QRBank has issued a verification link.</p>
+<p class="muted">Development mode writes the link to the application console. A production email provider will be configured before deployment.</p>
+<hr>
+<h2>Resend verification</h2>
+<form method="post" action="/auth/resend-verification">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+  <label>Email
+    <input type="email" name="email" required autocomplete="email">
+  </label>
+  <button class="secondary" type="submit">Resend verification</button>
+</form>
+<p class="links"><a href="/auth/login">Back to sign in</a></p>
+{% endblock %}

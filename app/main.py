@@ -3,6 +3,7 @@ from __future__ import annotations
 from fastapi import FastAPI, HTTPException, status
 
 from app.database import database_is_ready
+from app.routes.auth import router as auth_router
 
 
 app = FastAPI(
@@ -11,6 +12,8 @@ app = FastAPI(
     docs_url=None,
     redoc_url=None,
 )
+
+app.include_router(auth_router)
 
 
 @app.get("/health", tags=["system"])

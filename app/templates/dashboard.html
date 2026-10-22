@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% block title %}Dashboard · QRBank{% endblock %}
+{% block content %}
+<h1>QRBank</h1>
+<p>Signed in as <strong>{{ user.email }}</strong>.</p>
+<p class="success">Your email is verified.</p>
+<p class="muted">Classroom management will be added in the next milestone.</p>
+<form method="post" action="/auth/logout">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+  <button class="secondary" type="submit">Sign out</button>
+</form>
+{% endblock %}

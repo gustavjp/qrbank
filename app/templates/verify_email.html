@@ -1,0 +1,11 @@
+{% extends "base.html" %}
+{% block title %}Verify email · QRBank{% endblock %}
+{% block content %}
+<h1>Verify your email</h1>
+<p>Confirm this email verification request to activate your QRBank account.</p>
+<form method="post" action="/auth/verify-email">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+  <input type="hidden" name="token" value="{{ verification_token }}">
+  <button class="primary" type="submit">Verify email</button>
+</form>
+{% endblock %}

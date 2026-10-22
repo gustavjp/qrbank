@@ -6,19 +6,25 @@ The repository is being built incrementally from the approved product specificat
 
 ## Current milestone
 
-The current application foundation includes:
+The current application includes:
 
 - FastAPI application entry point
 - PostgreSQL + SQLAlchemy 2.x database connectivity
 - Alembic migrations
 - User and classroom ORM mappings
 - Argon2 password hashing
-- opaque server-side session-token foundation
+- teacher registration
+- hashed one-time email-verification tokens
+- resend-verification workflow
+- login blocked until email verification
+- opaque server-side session cookies
+- CSRF-protected server-rendered forms
+- login/logout and protected dashboard foundation
 - classroom owner/membership creation
 - health and readiness endpoints
 - PostgreSQL-backed automated tests
 
-Student banking, QR scanning, financial service code, rewards UI, and teacher-facing authentication pages are intentionally not implemented in this milestone.
+Student banking, QR scanning, financial service code, classroom-management pages, rewards UI, password reset, and a production email provider are intentionally not implemented yet.
 
 ## Local setup
 
@@ -36,6 +42,16 @@ Set the database connection:
 export QRBANK_DATABASE_URL="postgresql+psycopg://qrbank:qrbank@localhost:5432/qrbank"
 ```
 
+Optional development settings:
+
+```bash
+export QRBANK_ENVIRONMENT="development"
+export QRBANK_PUBLIC_BASE_URL="http://localhost:8000"
+export QRBANK_EMAIL_DELIVERY_MODE="console"
+```
+
+In development, verification links are written to the application console. Console delivery is rejected in production; a real provider must be configured before deployment.
+
 Apply the schema:
 
 ```bash
@@ -46,6 +62,12 @@ Run the application:
 
 ```bash
 uvicorn app.main:app --reload
+```
+
+Then open:
+
+```text
+http://localhost:8000/auth/register
 ```
 
 System checks:
@@ -60,6 +82,16 @@ pytest
 ```
 
 The integration test suite requires a disposable PostgreSQL database. GitHub Actions runs the suite against PostgreSQL 16.
+
+## Production security defaults
+
+- passwords are Argon2-hashed
+- raw session tokens are never stored in PostgreSQL
+- raw email-verification tokens are never stored in PostgreSQL
+- session cookies are HttpOnly and SameSite=Lax
+- session cookies default to Secure in production
+- state-changing web forms require CSRF validation
+- pending/unverified accounts cannot create authenticated sessions
 
 ## Design documents
 
