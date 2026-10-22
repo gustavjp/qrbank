@@ -8,6 +8,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.models.audit import AdminAuditEvent
 from app.models.classroom import Classroom, ClassroomMembership, ClassroomSettings
 
 
@@ -43,6 +44,33 @@ def _validate_timezone(value: str) -> str:
     except ZoneInfoNotFoundError as exc:
         raise ClassroomValidationError("timezone must be a valid IANA timezone") from exc
     return cleaned
+
+
+
+
+def _configuration_snapshot(
+    classroom: Classroom,
+    settings: ClassroomSettings,
+) -> dict[str, object]:
+    return {
+        "name": classroom.name,
+        "school_year": classroom.school_year,
+        "timezone": settings.timezone,
+        "starting_balance": settings.starting_balance,
+        "weekly_allowance_enabled": settings.weekly_allowance_enabled,
+        "weekly_allowance_amount": settings.weekly_allowance_amount,
+        "weekly_allowance_day": settings.weekly_allowance_day,
+        "weekly_allowance_time": settings.weekly_allowance_time.isoformat(),
+        "weekly_wages_enabled": settings.weekly_wages_enabled,
+        "weekly_wage_day": settings.weekly_wage_day,
+        "weekly_wage_time": settings.weekly_wage_time.isoformat(),
+        "sound_enabled": settings.sound_enabled,
+        "duplicate_scan_seconds": settings.duplicate_scan_seconds,
+        "allow_negative_balance": settings.allow_negative_balance,
+        "student_selection_timeout_seconds": settings.student_selection_timeout_seconds,
+        "confirm_normal_transactions": settings.confirm_normal_transactions,
+        "confirm_balance_reset": settings.confirm_balance_reset,
+    }
 
 
 def list_accessible_classrooms(
@@ -201,6 +229,8 @@ def update_classroom_configuration_for_owner(
     if student_selection_timeout_seconds <= 0:
         raise ClassroomValidationError("student selection timeout must be positive")
 
+    before_snapshot = _configuration_snapshot(access.classroom, settings)
+
     access.classroom.name = _clean_required(name, "classroom name")
     access.classroom.school_year = _clean_required(school_year, "school year")
 
@@ -220,6 +250,20 @@ def update_classroom_configuration_for_owner(
     settings.confirm_normal_transactions = confirm_normal_transactions
     settings.confirm_balance_reset = confirm_balance_reset
     settings.updated_by_user_id = user_id
+
+    after_snapshot = _configuration_snapshot(access.classroom, settings)
+    db.add(
+        AdminAuditEvent(
+            id=uuid.uuid4(),
+            classroom_id=classroom_id,
+            actor_user_id=user_id,
+            event_type="classroom_settings_updated",
+            target_type="classroom",
+            target_id=classroom_id,
+            before_json=before_snapshot,
+            after_json=after_snapshot,
+        )
+    )
 
     db.flush()
     return access.classroom, settings
