@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import and_, func, or_, select
+from sqlalchemy import Select, and_, func, or_, select
 from sqlalchemy.orm import Session, aliased
 
 from app.models.behavior import BehaviorEvent
@@ -39,6 +39,14 @@ class BehaviorHistoryRow:
 
 
 @dataclass(frozen=True)
+class BehaviorHistorySelection:
+    access: ClassroomAccess
+    roster: list[tuple[Student, Enrollment]]
+    statement: Select[tuple[BehaviorEvent]]
+    timezone_name: str
+
+
+@dataclass(frozen=True)
 class BehaviorHistoryPage:
     access: ClassroomAccess
     roster: list[tuple[Student, Enrollment]]
@@ -65,7 +73,7 @@ def _read_cursor(raw: str) -> tuple[datetime, uuid.UUID] | None:
         raise BehaviorHistoryValidationError("invalid pagination cursor") from exc
 
 
-def list_classroom_behavior(
+def select_classroom_behavior(
     db: Session,
     *,
     user_id: uuid.UUID,
@@ -74,23 +82,21 @@ def list_classroom_behavior(
     behavior_type: str = "",
     date_from: date | None = None,
     date_to: date | None = None,
-    before: str = "",
-) -> BehaviorHistoryPage:
-    """Read-only, membership-scoped behavior counts and stable event pagination."""
-    selection = select_classroom_enrollments(
+) -> BehaviorHistorySelection:
+    """Authorize and build the shared, classroom-scoped behavior filter query."""
+    enrollment_selection = select_classroom_enrollments(
         db, user_id=user_id, classroom_id=classroom_id,
     )
     if behavior_type and behavior_type not in BEHAVIOR_TYPES:
         raise BehaviorHistoryValidationError("invalid behavior type filter")
     if date_from and date_to and date_from > date_to:
         raise BehaviorHistoryValidationError("start date must be on or before end date")
-    cursor = _read_cursor(before)
     settings = db.get(ClassroomSettings, classroom_id)
     if settings is None:
         raise BehaviorHistoryValidationError("classroom settings unavailable")
     zone = ZoneInfo(settings.timezone)
 
-    roster = list(db.execute(selection.statement).all())
+    roster = list(db.execute(enrollment_selection.statement).all())
     if enrollment_id is not None and not any(
         enrollment.id == enrollment_id for _, enrollment in roster
     ):
@@ -112,6 +118,33 @@ def list_classroom_behavior(
         upper = datetime.combine(next_day, time.min, tzinfo=zone).astimezone(timezone.utc)
         stmt = stmt.where(BehaviorEvent.occurred_at < upper)
 
+    return BehaviorHistorySelection(
+        access=enrollment_selection.access, roster=roster,
+        statement=stmt, timezone_name=settings.timezone,
+    )
+
+
+def list_classroom_behavior(
+    db: Session,
+    *,
+    user_id: uuid.UUID,
+    classroom_id: uuid.UUID,
+    enrollment_id: uuid.UUID | None = None,
+    behavior_type: str = "",
+    date_from: date | None = None,
+    date_to: date | None = None,
+    before: str = "",
+) -> BehaviorHistoryPage:
+    """Read-only, membership-scoped behavior counts and stable event pagination."""
+    selection = select_classroom_behavior(
+        db, user_id=user_id, classroom_id=classroom_id,
+        enrollment_id=enrollment_id, behavior_type=behavior_type,
+        date_from=date_from, date_to=date_to,
+    )
+    cursor = _read_cursor(before)
+    zone = ZoneInfo(selection.timezone_name)
+    roster = selection.roster
+    stmt = selection.statement
     # Report totals over all filtered records, not just the visible 50.
     count_rows = db.execute(
         stmt.with_only_columns(BehaviorEvent.behavior_type, func.count())
@@ -146,7 +179,7 @@ def list_classroom_behavior(
             access=selection.access, roster=roster, rows=[],
             positive_count=totals.get("positive", 0),
             negative_count=totals.get("negative", 0),
-            next_before=None, timezone_name=settings.timezone,
+            next_before=None, timezone_name=selection.timezone_name,
         )
 
     # Explicit tenant equality on every join keeps event, enrollment and
@@ -199,5 +232,5 @@ def list_classroom_behavior(
         positive_count=totals.get("positive", 0),
         negative_count=totals.get("negative", 0),
         next_before=next_before,
-        timezone_name=settings.timezone,
+        timezone_name=selection.timezone_name,
     )
