@@ -11,6 +11,8 @@
 {% if replayed %}<p class="success">This request was already processed; no duplicate transaction was posted.</p>{% endif %}
 {% if financial_error %}<p class="error" role="alert">{{ financial_error }}</p>{% endif %}
 
+<p><a href="/classrooms/{{ classroom.id }}/job-assignments?enrollment_id={{ enrollment.id }}">View or manage this student's job assignments</a></p>
+
 <div style="border:1px solid #dfe5ec; border-radius:10px; padding:1rem; margin:1rem 0;">
   <div class="muted">Current balance</div>
   <div style="font-size:2rem; font-weight:700;">{{ enrollment.current_balance }}</div>
