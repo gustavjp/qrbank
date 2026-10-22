@@ -962,3 +962,152 @@ def post_weekly_job_wage(
     return ScheduledWageResult(
         payment=payment, transaction=transaction, amount=amount, replayed=False,
     )
+
+
+@dataclass(frozen=True)
+class ScheduledAllowanceResult:
+    payment: ScheduledPayment
+    transaction: FinancialTransaction | None
+    amount: int
+    replayed: bool
+
+
+def post_weekly_allowance(
+    db: Session,
+    *,
+    classroom_id: uuid.UUID,
+    enrollment_id: uuid.UUID,
+    period_key: str,
+    due_at: datetime,
+    local_due_date: date,
+    automation_run_id: uuid.UUID | None = None,
+) -> ScheduledAllowanceResult | None:
+    """Post exactly one allowance per enrollment and classroom-local week.
+
+    The caller commits the ledger, cached balance, request, and payment together.
+    Locking the enrollment serializes all financial writers for this student.
+    """
+    enrollment = db.scalar(
+        select(Enrollment).where(
+            Enrollment.id == enrollment_id,
+            Enrollment.classroom_id == classroom_id,
+        ).with_for_update().execution_options(populate_existing=True)
+    )
+    if enrollment is None or not enrollment.active:
+        return None
+    if (
+        enrollment.created_at > due_at
+        or (enrollment.started_on is not None and enrollment.started_on > local_due_date)
+        or (enrollment.ended_on is not None and enrollment.ended_on < local_due_date)
+    ):
+        # Do not pay retroactively for enrollments that joined after payday.
+        return None
+
+    settings = db.scalar(
+        select(ClassroomSettings).where(
+            ClassroomSettings.classroom_id == classroom_id,
+        ).with_for_update().execution_options(populate_existing=True)
+    )
+    if settings is None:
+        raise FinancialIntegrityError("classroom settings not found")
+    if not settings.weekly_allowance_enabled:
+        return None
+
+    # Settings can change while a scheduler is reading classrooms/students.
+    expected_due = datetime.combine(
+        local_due_date, settings.weekly_allowance_time,
+        tzinfo=ZoneInfo(settings.timezone),
+    ).astimezone(timezone.utc)
+    expected_week = (
+        local_due_date - timedelta(days=local_due_date.weekday())
+    ).isoformat()
+    if (
+        due_at.tzinfo is None
+        or settings.weekly_allowance_day != local_due_date.weekday()
+        or expected_due != due_at.astimezone(timezone.utc)
+        or expected_week != period_key
+    ):
+        return None
+
+    amount = settings.weekly_allowance_amount
+    if type(amount) is not int or not 0 <= amount <= 2**31 - 1:
+        raise FinancialIntegrityError("weekly allowance is outside the supported integer range")
+
+    request, replayed = _claim_request(
+        db, classroom_id=classroom_id, actor_user_id=None,
+        idempotency_key=f"allowance:{enrollment_id}:{period_key}",
+        request_kind="allowance",
+        request_fingerprint=_fingerprint([
+            "allowance", str(classroom_id), str(enrollment_id), period_key,
+        ]),
+    )
+    if replayed:
+        if request.request_kind != "allowance":
+            raise FinancialIdempotencyConflictError("allowance key belongs to another operation")
+        payment = db.scalar(select(ScheduledPayment).where(
+            ScheduledPayment.classroom_id == classroom_id,
+            ScheduledPayment.payment_type == "allowance",
+            ScheduledPayment.enrollment_id == enrollment_id,
+            ScheduledPayment.period_key == period_key,
+        ))
+        if payment is None or request.response_json is None:
+            raise FinancialIntegrityError("completed allowance request has no scheduled payment")
+        transaction = (
+            db.get(FinancialTransaction, payment.financial_transaction_id)
+            if payment.financial_transaction_id else None
+        )
+        if (
+            request.response_json.get("scheduled_payment_id") != str(payment.id)
+            or request.response_json.get("transaction_id")
+            != (str(transaction.id) if transaction else None)
+            or (payment.financial_transaction_id is not None and transaction is None)
+            or (transaction is not None and (
+                transaction.financial_request_id != request.id
+                or transaction.classroom_id != classroom_id
+                or transaction.enrollment_id != enrollment_id
+                or transaction.transaction_type != "allowance"
+            ))
+        ):
+            raise FinancialIntegrityError("allowance request/payment/ledger mismatch")
+        return ScheduledAllowanceResult(
+            payment=payment, transaction=transaction,
+            amount=payment.amount_snapshot, replayed=True,
+        )
+
+    before = enrollment.current_balance
+    after = before + amount
+    if not -(2**31) <= after <= 2**31 - 1:
+        raise FinancialIntegrityError("allowance would exceed the supported balance range")
+
+    transaction = None
+    if amount:
+        transaction = FinancialTransaction(
+            id=uuid.uuid4(), classroom_id=classroom_id,
+            enrollment_id=enrollment.id, financial_request_id=request.id,
+            transaction_type="allowance", source="automatic", amount=amount,
+            balance_before=before, balance_after=after, actor_user_id=None,
+            note=f"Weekly allowance (week of {period_key})",
+            student_code_snapshot=enrollment.student_code,
+        )
+        db.add(transaction)
+        enrollment.current_balance = after
+        db.flush()
+
+    payment = ScheduledPayment(
+        id=uuid.uuid4(), classroom_id=classroom_id,
+        payment_type="allowance", enrollment_id=enrollment.id,
+        job_assignment_id=None, period_key=period_key,
+        amount_snapshot=amount, automation_run_id=automation_run_id,
+        financial_transaction_id=transaction.id if transaction else None,
+    )
+    db.add(payment)
+    db.flush()
+    request.response_json = {
+        "scheduled_payment_id": str(payment.id),
+        "transaction_id": str(transaction.id) if transaction else None,
+        "amount": amount, "balance_after": after,
+    }
+    db.flush()
+    return ScheduledAllowanceResult(
+        payment=payment, transaction=transaction, amount=amount, replayed=False,
+    )
