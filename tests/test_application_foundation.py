@@ -6,12 +6,15 @@ from sqlalchemy.orm import Session
 from app.models.auth import User
 from app.models.classroom import ClassroomMembership, ClassroomSettings
 from app.services.auth import (
+    EmailVerificationRequiredError,
     InvalidCredentialsError,
     authenticate_user,
+    create_email_verification_token,
     create_user_session,
     register_user,
     resolve_user_session,
     revoke_user_session,
+    verify_email_token,
 )
 from app.services.classrooms import create_classroom_for_owner
 
@@ -26,6 +29,18 @@ def test_register_authenticate_and_server_side_session(engine) -> None:
         assert user.email_normalized == email.casefold()
         assert user.password_hash != password
         assert user.account_status == "pending_verification"
+
+    with Session(engine) as db:
+        try:
+            authenticate_user(db, email="teacher.one@example.test", password=password)
+        except EmailVerificationRequiredError:
+            pass
+        else:
+            raise AssertionError("unverified account should not authenticate")
+
+    with Session(engine) as db, db.begin():
+        verification = create_email_verification_token(db, user_id=user_id)
+        verify_email_token(db, token=verification.token)
 
     with Session(engine) as db:
         authenticated = authenticate_user(db, email="teacher.one@example.test", password=password)
