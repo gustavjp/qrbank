@@ -167,6 +167,7 @@ def post_opening_balance(
             Enrollment.classroom_id == classroom_id,
         )
         .with_for_update()
+        .execution_options(populate_existing=True)
     )
     if enrollment is None:
         raise FinancialIntegrityError("enrollment not found for opening balance")
@@ -284,7 +285,7 @@ def post_scanned_action(
     enrollment = db.scalar(select(Enrollment).where(
         Enrollment.id == enrollment_id, Enrollment.classroom_id == classroom_id,
         Enrollment.active.is_(True),
-    ).with_for_update())
+    ).with_for_update().execution_options(populate_existing=True))
     if enrollment is None:
         raise ScanValidationError("selected student is not active in this classroom")
     settings = db.get(ClassroomSettings, classroom_id)
@@ -296,18 +297,18 @@ def post_scanned_action(
         quick = db.scalar(select(QuickAction).where(
             QuickAction.classroom_id == classroom_id,
             QuickAction.quick_action_code == code, QuickAction.active.is_(True),
-        ).with_for_update())
+        ).with_for_update().execution_options(populate_existing=True))
         if quick is None:
             raise ScanValidationError("Quick Action is unknown or inactive in this classroom")
         action = db.scalar(select(Action).where(
             Action.id == quick.action_id, Action.classroom_id == classroom_id,
             Action.active.is_(True),
-        ).with_for_update())
+        ).with_for_update().execution_options(populate_existing=True))
     else:
         action = db.scalar(select(Action).where(
             Action.classroom_id == classroom_id, Action.action_code == code,
             Action.active.is_(True),
-        ).with_for_update())
+        ).with_for_update().execution_options(populate_existing=True))
     if action is None:
         raise ScanValidationError("action is unknown or inactive in this classroom")
 

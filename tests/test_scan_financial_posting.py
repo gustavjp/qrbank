@@ -401,3 +401,32 @@ def test_replay_remains_safe_after_action_is_deactivated(engine):
     with Session(engine) as db:
         assert db.get(Enrollment, student_id).current_balance == 5
         assert len(_ledger(db, student_id)) == 1
+
+
+def test_preloaded_enrollment_is_refreshed_after_row_lock(engine):
+    client, owner = _actor(engine)
+    classroom_id = _classroom(engine, owner)
+    student_id = _student(engine, owner, classroom_id)
+    with Session(engine) as stale_session:
+        stale_enrollment = stale_session.get(Enrollment, student_id)
+        assert stale_enrollment.current_balance == 0
+        with Session(engine) as other_session:
+            post_scanned_action(
+                other_session, actor_user_id=owner, classroom_id=classroom_id,
+                enrollment_id=student_id, payload="ACTION:A01",
+                request_id=uuid.uuid4(),
+            )
+            other_session.commit()
+        # The first session's identity map still contains the pre-post balance.
+        assert stale_enrollment.current_balance == 0
+        posted = post_scanned_action(
+            stale_session, actor_user_id=owner, classroom_id=classroom_id,
+            enrollment_id=student_id, payload="ACTION:A01",
+            request_id=uuid.uuid4(),
+        )
+        assert posted.transaction.balance_before == 5
+        assert posted.transaction.balance_after == 10
+        stale_session.commit()
+    with Session(engine) as db:
+        assert db.get(Enrollment, student_id).current_balance == 10
+        assert [tx.amount for tx in _ledger(db, student_id)] == [5, 5]
