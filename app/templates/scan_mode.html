@@ -1,6 +1,20 @@
 {% extends "base.html" %}
 {% block title %}Scan Mode · {{ classroom.name }} · QRBank{% endblock %}
 {% block content %}
+<style>
+  #camera-panel {
+    position: fixed; z-index: 20; bottom: max(.75rem, env(safe-area-inset-bottom)); right: .75rem;
+    box-sizing: border-box; width: min(21rem, calc(100vw - 1.5rem));
+    padding: .85rem; border: 1px solid #b9c3cf; border-radius: 12px;
+    background: #fff; box-shadow: 0 10px 35px rgba(0,0,0,.25);
+  }
+  #camera-panel[hidden] { display: none; }
+  #camera-panel video { display: block; width: 100%; max-height: 14rem; object-fit: cover;
+    background: #101820; border-radius: 8px; }
+  #camera-panel p { margin: .5rem 0; }
+  #camera-panel button { margin-top: .3rem; }
+  body.camera-active { padding-bottom: 19rem; }
+</style>
 <div id="scanner-panel" data-sound-enabled="{{ '1' if sound_enabled else '0' }}">
   <p><a href="/classrooms/{{ classroom.id }}">← {{ classroom.name }}</a></p>
   <h1>Scan Mode</h1>
@@ -79,6 +93,8 @@
       <button class="primary" id="scan-submit" type="submit">Process scan</button>
     </form>
     <button class="secondary" id="scanner-toggle" type="button" aria-pressed="false">Pause scanner</button>
+    <p><button class="secondary" id="camera-start" type="button">Start camera scanning</button></p>
+    <p class="muted">Use your phone or tablet camera over HTTPS. USB scanners and manual entry still work without a camera.</p>
   {% endif %}
   <p id="scanner-status" class="muted" role="status" aria-live="polite">
     {% if error or (outcome and outcome.rejection_code) %}ERROR
@@ -89,7 +105,7 @@
   <div id="scan-feedback" hidden data-tone="{% if error or (outcome and outcome.rejection_code) %}error{% elif outcome and not outcome.replayed %}success{% elif result and result.command == 'STUDENT' %}student{% else %}none{% endif %}"></div>
   {% if not sound_enabled %}<p class="muted">Sound feedback is disabled in classroom settings.</p>{% endif %}
 </div>
-<noscript><p class="muted">Forms work without JavaScript; sounds, automatic focus, and the countdown require JavaScript. The server still enforces the selection timeout.</p></noscript>
+<noscript><p class="muted">Forms work without JavaScript; camera scanning, sounds, automatic focus, and the countdown require JavaScript. The server still enforces the selection timeout.</p></noscript>
 <script>
 (function () {
   "use strict";
@@ -97,10 +113,134 @@
   let manualPause = false;
   let editingPause = false;
   let audioContext = null;
+  let decoderPromise = null;
+  let cameraControls = null;
+  let cameraRequested = false;
+  let cameraStarting = false;
+  let heldCameraPayload = "";
+  let cameraAbsentSince = 0;
 
   function panel() { return document.getElementById("scanner-panel"); }
   function status() { return document.getElementById("scanner-status"); }
   function scannerInput() { return document.getElementById("scanner-input"); }
+  function cameraPanel() { return document.getElementById("camera-panel"); }
+
+  function cameraMessage(message) {
+    const element = document.getElementById("camera-status");
+    if (element) element.textContent = message;
+  }
+
+  function releaseCamera() {
+    if (cameraControls) {
+      try { cameraControls.stop(); } catch (_) {}
+    }
+    cameraControls = null;
+    const video = document.getElementById("camera-video");
+    if (video && video.srcObject) {
+      video.srcObject.getTracks().forEach(function (track) { track.stop(); });
+      video.srcObject = null;
+    }
+  }
+
+  function stopCamera() {
+    cameraRequested = false;
+    releaseCamera();
+    heldCameraPayload = "";
+    cameraAbsentSince = 0;
+    document.body.classList.remove("camera-active");
+    if (cameraPanel()) cameraPanel().hidden = true;
+    syncPause();
+    readyFocus();
+  }
+
+  function loadQrDecoder() {
+    if (window.ZXingBrowser?.BrowserQRCodeReader) return Promise.resolve(window.ZXingBrowser);
+    if (decoderPromise) return decoderPromise;
+    decoderPromise = new Promise(function (resolve, reject) {
+      const script = document.createElement("script");
+      script.src = "https://cdn.jsdelivr.net/npm/@zxing/browser@0.2.1/umd/zxing-browser.min.js";
+      script.integrity = "sha384-HRtzk9lZgkbSgvUyQrnfC/GxiXZgwaNyD7hC9wcXlsBpDhkS80ISl73juef2FRuf";
+      script.crossOrigin = "anonymous";
+      script.referrerPolicy = "no-referrer";
+      script.onload = function () {
+        if (window.ZXingBrowser?.BrowserQRCodeReader) resolve(window.ZXingBrowser);
+        else { decoderPromise = null; reject(new Error("QR decoder unavailable")); }
+      };
+      script.onerror = function () {
+        script.remove();
+        decoderPromise = null;
+        reject(new Error("Unable to load the QR decoder"));
+      };
+      document.head.appendChild(script);
+    });
+    return decoderPromise;
+  }
+
+  function onCameraDecode(result) {
+    if (!cameraRequested) return;
+    if (!result) {
+      if (heldCameraPayload) {
+        if (!cameraAbsentSince) cameraAbsentSince = Date.now();
+        if (Date.now() - cameraAbsentSince > 1200) heldCameraPayload = "";
+      }
+      return;
+    }
+    const payload = String(result.getText()).trim().toUpperCase();
+    cameraAbsentSince = 0;
+    if (payload === heldCameraPayload || processing || manualPause || editingPause) return;
+    if (!/^(STUDENT|QUICK|ACTION):[A-Z0-9_-]{1,32}$/.test(payload)) {
+      heldCameraPayload = payload;
+      cameraMessage("Not a QRBank code. Try another QR code.");
+      return;
+    }
+    const form = document.getElementById("scan-form");
+    const input = scannerInput();
+    if (!form || !input || !form.action.endsWith("/execute")) {
+      cameraMessage("Confirm or cancel the current action before scanning again.");
+      return;
+    }
+    heldCameraPayload = payload;
+    input.value = payload;
+    cameraMessage("Read " + payload + ". Move the code out of view before rescanning it.");
+    // Identical to the USB scanner's submit: server validation, CSRF,
+    // selection tokens, confirmation, and idempotency remain authoritative.
+    form.requestSubmit();
+  }
+
+  async function startCamera() {
+    if (cameraRequested || cameraStarting) return;
+    if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia) {
+      if (status()) status().textContent = "CAMERA REQUIRES HTTPS AND A SUPPORTED BROWSER";
+      return;
+    }
+    cameraRequested = true;
+    cameraStarting = true;
+    if (scannerInput()?.blur) scannerInput().blur();
+    if (cameraPanel()) cameraPanel().hidden = false;
+    document.body.classList.add("camera-active");
+    cameraMessage("Loading QR decoder and requesting camera permission...");
+    syncPause();
+    try {
+      const decoder = await loadQrDecoder();
+      if (!cameraRequested) return;
+      const reader = new decoder.BrowserQRCodeReader();
+      const video = document.getElementById("camera-video");
+      const controls = await reader.decodeFromConstraints(
+        {audio: false, video: {facingMode: {ideal: "environment"}}},
+        video, onCameraDecode,
+      );
+      if (!cameraRequested) { controls.stop(); return; }
+      cameraControls = controls;
+      cameraMessage("Camera ready. Point it at a QRBank code.");
+    } catch (error) {
+      cameraRequested = false;
+      releaseCamera();
+      cameraMessage("Camera unavailable. Check permission, connection, or camera use by another app. USB scanning still works.");
+    } finally {
+      cameraStarting = false;
+      syncPause();
+    }
+  }
 
   function canPlay() {
     return panel() && panel().dataset.soundEnabled === "1";
@@ -153,6 +293,12 @@
       toggle.textContent = manualPause ? "Resume scanner" : "Pause scanner";
       toggle.setAttribute("aria-pressed", manualPause ? "true" : "false");
     }
+    const start = document.getElementById("camera-start");
+    if (start) {
+      start.disabled = cameraRequested || cameraStarting || paused;
+      start.textContent = cameraStarting ? "Starting camera..." :
+                          cameraRequested ? "Camera running" : "Start camera scanning";
+    }
     if (!processing && paused && status()) status().textContent = "PAUSED";
   }
 
@@ -177,7 +323,7 @@
 
   function readyFocus() {
     const input = scannerInput();
-    if (input && !manualPause && !editingPause) input.focus();
+    if (input && !manualPause && !editingPause && !cameraRequested) input.focus();
   }
 
   document.addEventListener("keydown", unlockAudio);
@@ -188,6 +334,8 @@
       syncPause();
       if (!manualPause) readyFocus();
     }
+    if (event.target && event.target.id === "camera-start") startCamera();
+    if (event.target && event.target.id === "camera-stop") stopCamera();
   });
   document.addEventListener("focusin", function (event) {
     if (isOtherEditor(event.target)) {
@@ -253,9 +401,20 @@
     }
   });
   setInterval(updateCountdown, 1000);
+  document.addEventListener("visibilitychange", function () {
+    if (document.hidden) stopCamera();
+  });
+  window.addEventListener("pagehide", stopCamera);
   syncPause();
   updateCountdown();
   readyFocus();
 })();
 </script>
+{% endblock %}
+{% block page_footer %}
+<section id="camera-panel" hidden aria-label="Camera QR scanner">
+  <video id="camera-video" autoplay muted playsinline aria-label="Live QR code camera preview"></video>
+  <p id="camera-status" role="status" aria-live="polite">Camera off.</p>
+  <button class="secondary" id="camera-stop" type="button">Stop camera</button>
+</section>
 {% endblock %}
