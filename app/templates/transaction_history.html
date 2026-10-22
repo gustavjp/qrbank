@@ -49,6 +49,8 @@
   <button class="primary" type="submit">Apply filters</button>
   <p><a href="/classrooms/{{ classroom.id }}/transactions">Clear filters / latest</a></p>
 </form>
+<p><a href="{{ export_url }}">Download matching transactions (CSV)</a></p>
+<p class="muted">Exports all posted transactions matching these filters, not just this page. Student codes and historical snapshots are preserved as text; when importing into a spreadsheet, keep student codes as text to retain leading zeros.</p>
 
 <h2>Posted transactions{% if rows %} ({{ rows|length }} on this page){% endif %}</h2>
 {% if rows %}
