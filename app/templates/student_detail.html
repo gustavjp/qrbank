@@ -1,0 +1,59 @@
+{% extends "base.html" %}
+{% block title %}{{ student.display_name or enrollment.student_code }} · QRBank{% endblock %}
+{% block content %}
+<p><a href="/classrooms/{{ classroom.id }}/students">← Students</a></p>
+<h1>{{ student.display_name or ("Student " ~ enrollment.student_code) }}</h1>
+<p class="muted">Student code: {{ enrollment.student_code }} · {{ "Active" if enrollment.active else "Inactive" }}</p>
+{% if saved %}<p class="success">Student information saved.</p>{% endif %}
+
+<div style="border:1px solid #dfe5ec; border-radius:10px; padding:1rem; margin:1rem 0;">
+  <div class="muted">Current balance</div>
+  <div style="font-size:2rem; font-weight:700;">{{ enrollment.current_balance }}</div>
+</div>
+
+{% if can_manage %}
+<h2>Edit student</h2>
+<form method="post" action="/classrooms/{{ classroom.id }}/students/{{ enrollment.id }}/edit">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+  <label>Student code
+    <input type="text" name="student_code" required maxlength="32" value="{{ enrollment.student_code }}">
+  </label>
+  <p class="muted"><strong>QR warning:</strong> changing this code means previously printed STUDENT:{{ enrollment.student_code }} QR labels will stop resolving for this student. Reprint the student's QR after changing the code.</p>
+  <label>Display name (optional)
+    <input type="text" name="display_name" value="{{ student.display_name or '' }}">
+  </label>
+  <label>Classroom notes (optional)
+    <input type="text" name="notes" value="{{ enrollment.notes or '' }}">
+  </label>
+  <button class="primary" type="submit">Save student</button>
+</form>
+
+{% if enrollment.active %}
+<form method="post" action="/classrooms/{{ classroom.id }}/students/{{ enrollment.id }}/deactivate">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+  <button class="secondary" type="submit">Mark inactive</button>
+</form>
+{% else %}
+<form method="post" action="/classrooms/{{ classroom.id }}/students/{{ enrollment.id }}/reactivate">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+  <button class="secondary" type="submit">Reactivate student</button>
+</form>
+{% endif %}
+{% endif %}
+
+<h2>Transaction history</h2>
+{% if transactions %}
+  <div style="display:grid; gap:.6rem;">
+    {% for tx in transactions %}
+      <div style="border:1px solid #dfe5ec; border-radius:8px; padding:.75rem;">
+        <strong>TX{{ "%06d"|format(tx.display_number) }}</strong>
+        · {{ tx.transaction_type }}
+        · {% if tx.amount > 0 %}+{% endif %}{{ tx.amount }}
+        <div class="muted">Balance {{ tx.balance_before }} → {{ tx.balance_after }}</div>
+      </div>
+    {% endfor %}
+  </div>
+{% else %}
+  <p class="muted">No financial transactions yet.</p>
+{% endif %}
+{% endblock %}
