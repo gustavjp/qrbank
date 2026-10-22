@@ -17,6 +17,8 @@
   ·
   <a href="/classrooms/{{ classroom.id }}/students?show=all">All</a>
 </p>
+<p><a href="/classrooms/{{ classroom.id }}/students/export.csv?show={{ show }}">Download {{ "active" if show == "active" else "full" }} roster and balances (CSV)</a></p>
+<p class="muted">Includes student codes, display names, enrollment status and dates, and current integer balances. Internal notes are excluded.</p>
 
 {% if rows %}
   <div style="display:grid; gap:.75rem;">
