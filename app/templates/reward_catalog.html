@@ -4,7 +4,7 @@
 <p><a href="/classrooms/{{ classroom.id }}">← {{ classroom.name }}</a></p>
 <h1>Classroom Rewards</h1>
 <p><a href="/classrooms/{{ classroom.id }}/reward-purchases">View reward purchases and manage fulfillment</a></p>
-<p class="muted">Configure classroom rewards and their point prices, then purchase them for active students. Purchases deduct points and create permanent financial and purchase records. Inventory setup and images will be added separately.</p>
+<p class="muted">Configure classroom rewards and their point prices, then purchase them for active students. Purchases deduct points and create permanent financial and purchase records. Optional inventory tracking keeps an auditable stock count.</p>
 {% if purchased %}<p class="success">Reward purchased and recorded in the ledger.</p>{% endif %}
 {% if replayed %}<p class="success">This purchase was already processed; no duplicate charge occurred.</p>{% endif %}
 
@@ -14,7 +14,9 @@
   <div style="border-bottom:1px solid #dfe5ec; padding:.6rem 0;">
     <strong>{{ reward.reward_code }} — {{ reward.name }}</strong>
     <div>{{ reward.price_points }} points · {{ reward.reward_type|title }} · {{ "Active" if reward.active else "Inactive" }}</div>
-    {% if reward.inventory_tracking %}<div>Stock: {{ reward.quantity_available }}</div>{% endif %}
+    <div>{% if reward.inventory_tracking %}Stock: {{ reward.quantity_available }}{% else %}Stock not tracked{% endif %}
+      · <a href="/classrooms/{{ classroom.id }}/rewards/{{ reward.id }}/inventory">{{ "Manage" if can_manage else "View" }} inventory</a>
+    </div>
     {% if reward.description %}<p class="muted">{{ reward.description }}</p>{% endif %}
     {% if can_manage and reward.active and enrollments %}
       {% if reward.inventory_tracking and reward.quantity_available < 1 %}

@@ -4,6 +4,7 @@
 <p><a href="/classrooms/{{ classroom.id }}/rewards">← Classroom Rewards</a></p>
 <h1>Edit {{ reward.reward_code }}</h1>
 <p class="muted">Editing a reward never changes balances or historical transactions. Inactive rewards remain visible.</p>
+<p><a href="/classrooms/{{ classroom.id }}/rewards/{{ reward.id }}/inventory">Inventory count and history</a></p>
 <form method="post" action="/classrooms/{{ classroom.id }}/rewards/{{ reward.id }}/edit">
   <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
   <label>Reward code <input name="code" required maxlength="32" value="{{ reward.reward_code }}"></label>
@@ -20,3 +21,4 @@
   <button class="primary" type="submit">Save Reward</button>
 </form>
 {% endblock %}
+
