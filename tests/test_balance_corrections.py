@@ -191,14 +191,19 @@ def test_adjustment_validates_integer_negative_balance_and_difference_overflow(e
     classroom_negative = _classroom(engine, owner, allow_negative=True)
     student_negative = _student(engine, owner, classroom_negative)
     _detail(client, classroom_negative, student_negative)
-    minimum = _adjust(client, classroom_negative, student_negative, target="-2147483648")
-    assert minimum.status_code == 303
+    nonreversible = _adjust(client, classroom_negative, student_negative, target="-2147483648")
+    assert nonreversible.status_code == 422
+    assert "integer transaction range" in nonreversible.text
+    minimum_reversible = _adjust(
+        client, classroom_negative, student_negative, target="-2147483647",
+    )
+    assert minimum_reversible.status_code == 303
     too_large = _adjust(client, classroom_negative, student_negative, target="2147483647")
     assert too_large.status_code == 422
     assert "integer transaction range" in too_large.text
     with Session(engine) as db:
-        assert db.get(Enrollment, student_negative).current_balance == -(2**31)
-        assert [tx.amount for tx in _ledger(db, student_negative)] == [-(2**31)]
+        assert db.get(Enrollment, student_negative).current_balance == -(2**31 - 1)
+        assert [tx.amount for tx in _ledger(db, student_negative)] == [-(2**31 - 1)]
 
 
 def test_reversal_chain_preserves_original_and_reversal_of_reversal(engine):
