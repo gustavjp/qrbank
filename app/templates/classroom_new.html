@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block title %}Create classroom · QRBank{% endblock %}
+{% block content %}
+<h1>Create classroom</h1>
+{% if error %}<p class="error">{{ error }}</p>{% endif %}
+<form method="post" action="/classrooms/new">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+  <label>Classroom name
+    <input type="text" name="name" required maxlength="200" value="{{ name or '' }}" placeholder="Period 1 Math">
+  </label>
+  <label>School year
+    <input type="text" name="school_year" required maxlength="50" value="{{ school_year or '' }}" placeholder="2026-2027">
+  </label>
+  <button class="primary" type="submit">Create classroom</button>
+</form>
+<p class="links"><a href="/dashboard">Back to dashboard</a></p>
+{% endblock %}
