@@ -16,6 +16,7 @@ The current application includes:
 - teacher registration
 - hashed one-time email-verification tokens
 - resend-verification workflow
+- hashed single-use, expiring teacher password reset links with non-enumerating request flow, email cooldown, and session revocation
 - login blocked until email verification
 - opaque server-side session cookies
 - CSRF-protected server-rendered forms
@@ -47,6 +48,8 @@ The current application includes:
 - classroom-local optional reward purchase windows with audited schedule edits, DST validation, stale-form protection, and matching catalog/student-page availability states
 - classroom QR Code Center with immediate, locally generated PNG/SVG downloads for active students, Quick Actions, and Actions; codes match scanner commands
 - bulk printable vector QR PDFs in US Letter/A4 with student cards, Quick Action cards, mixed QR-only sheets, all-active and individually selected codes, and classroom labels
+- classroom QR PNG/SVG ZIP packs with a CSV manifest for all-active and selected codes
+- optional mobile camera capture in Scan Mode over HTTPS, using the existing secure scan processing flow
 - classroom-configured positive/negative behavior reasons and audited post-scan reason/detail attachment, without financial ledger mutation
 - classroom-wide read-only ledger browsing with tenant-bound student/type/source/category/local-date filters and stable keyset pagination
 - authorized streaming CSV export of all filtered posted ledger entries, with immutable identifiers, numeric balances, local/UTC timestamps, and spreadsheet formula safeguards
@@ -58,7 +61,7 @@ The current application includes:
 - health and readiness endpoints
 - PostgreSQL-backed automated tests
 
-Weekly job wages and student allowances have external scheduler commands, but no scheduler is provisioned or enabled automatically. Inventory tracking cannot yet be disabled after activation; QR ZIP export, refund undo, reward images, mobile camera integration, password reset, and a production email provider are not implemented yet. Scan Mode can post QR Action/Quick Action transactions to the ledger.
+Weekly job wages and student allowances have external scheduler commands, but no scheduler is provisioned or enabled automatically. Inventory tracking cannot yet be disabled after activation; refund undo, reward images, and a production email provider are not implemented yet. Scan Mode can post QR Action/Quick Action transactions to the ledger. Physical mobile-camera testing remains required before production use.
 
 ## Local setup
 
@@ -85,6 +88,22 @@ export QRBANK_EMAIL_DELIVERY_MODE="console"
 ```
 
 In development, verification links are written to the application console. Console delivery is rejected in production; a real provider must be configured before deployment.
+
+## Teacher password reset
+
+The sign-in page links to **Forgot password?**. The teacher enters their email,
+and QRBank returns the same confirmation for known and unknown addresses. Only
+active, email-verified accounts receive a reset link. Links are random, stored
+only as SHA-256 hashes, expire after 30 minutes, and can be used once. A new link
+invalidates older ones after a one-minute per-account request cooldown. Resetting
+the password revokes every existing session and requires a fresh sign-in.
+
+The current development email mode writes the link to the server console; the
+reset flow is **not production-ready** until a real email provider is configured.
+Set `QRBANK_PUBLIC_BASE_URL` to the externally accessible HTTPS origin, and
+optionally `QRBANK_PASSWORD_RESET_TOKEN_TTL_SECONDS` to change the TTL. Handle
+reset links as secrets: avoid access logs with query strings and verify that
+proxies preserve HTTPS, no-store, and no-referrer response headers.
 
 Apply the schema:
 

@@ -17,3 +17,9 @@ def test_development_defaults_to_nonsecure_cookie_for_local_http(monkeypatch) ->
     development = load_settings()
 
     assert development.session_cookie_secure is False
+
+
+def test_password_reset_link_default_expiration(monkeypatch) -> None:
+    monkeypatch.delenv("QRBANK_PASSWORD_RESET_TOKEN_TTL_SECONDS", raising=False)
+
+    assert load_settings().password_reset_token_ttl_seconds == 30 * 60

@@ -35,6 +35,10 @@ class InvalidVerificationTokenError(ValueError):
     pass
 
 
+class InvalidPasswordResetTokenError(ValueError):
+    pass
+
+
 class WeakPasswordError(ValueError):
     pass
 
@@ -49,6 +53,13 @@ class CreatedSession:
 class CreatedVerificationToken:
     token: str
     expires_at: datetime
+
+
+@dataclass(frozen=True)
+class CreatedPasswordResetToken:
+    token: str
+    expires_at: datetime
+    recipient_email: str
 
 
 def normalize_email(email: str) -> str:
@@ -181,6 +192,108 @@ def find_pending_verification_user(db: Session, *, email: str) -> User | None:
             User.email_verified_at.is_(None),
         )
     )
+
+
+def create_password_reset_token(
+    db: Session,
+    *,
+    email: str,
+    ttl_seconds: int | None = None,
+) -> CreatedPasswordResetToken | None:
+    """Create one use-only token for an active, verified user.
+
+    The same response is shown to the requester regardless of the return value.
+    A short per-account cooldown limits repeated reset emails.
+    """
+    normalized = normalize_email(email)
+    user = db.scalar(
+        select(User).where(User.email_normalized == normalized).with_for_update()
+    )
+    if user is None or user.account_status != "active" or user.email_verified_at is None:
+        return None
+
+    now = datetime.now(timezone.utc)
+    most_recent = db.scalar(
+        select(AuthToken.created_at)
+        .where(AuthToken.user_id == user.id, AuthToken.token_type == "password_reset")
+        .order_by(AuthToken.created_at.desc())
+        .limit(1)
+    )
+    if most_recent is not None and now - most_recent < timedelta(seconds=60):
+        return None
+
+    db.execute(
+        update(AuthToken)
+        .where(
+            AuthToken.user_id == user.id,
+            AuthToken.token_type == "password_reset",
+            AuthToken.consumed_at.is_(None),
+        )
+        .values(consumed_at=now)
+    )
+    raw_token = generate_one_time_token()
+    expires_at = now + timedelta(
+        seconds=ttl_seconds if ttl_seconds is not None else settings.password_reset_token_ttl_seconds
+    )
+    db.add(
+        AuthToken(
+            id=uuid.uuid4(),
+            user_id=user.id,
+            token_type="password_reset",
+            token_hash=hash_one_time_token(raw_token),
+            expires_at=expires_at,
+        )
+    )
+    db.flush()
+    return CreatedPasswordResetToken(
+        token=raw_token, expires_at=expires_at, recipient_email=user.email
+    )
+
+
+def reset_password_with_token(db: Session, *, token: str, password: str) -> User:
+    """Consume a reset link and revoke every previously issued session atomically."""
+    validate_password(password)
+    now = datetime.now(timezone.utc)
+    candidate = db.scalar(
+        select(AuthToken).where(
+            AuthToken.token_hash == hash_one_time_token(token),
+            AuthToken.token_type == "password_reset",
+        )
+    )
+    if candidate is None:
+        raise InvalidPasswordResetTokenError("reset link is invalid or expired")
+
+    # Match the user -> token lock order used by reset issuance to avoid deadlocks.
+    user = db.scalar(select(User).where(User.id == candidate.user_id).with_for_update())
+    record = db.scalar(select(AuthToken).where(AuthToken.id == candidate.id).with_for_update())
+    if (
+        user is None
+        or user.account_status != "active"
+        or user.email_verified_at is None
+        or record is None
+        or record.consumed_at is not None
+        or record.expires_at <= now
+    ):
+        raise InvalidPasswordResetTokenError("reset link is invalid or expired")
+
+    user.password_hash = hash_password(password)
+    user.updated_at = now
+    db.execute(
+        update(AuthToken)
+        .where(
+            AuthToken.user_id == user.id,
+            AuthToken.token_type == "password_reset",
+            AuthToken.consumed_at.is_(None),
+        )
+        .values(consumed_at=now)
+    )
+    db.execute(
+        update(UserSession)
+        .where(UserSession.user_id == user.id, UserSession.revoked_at.is_(None))
+        .values(revoked_at=now)
+    )
+    db.flush()
+    return user
 
 
 def create_user_session(
