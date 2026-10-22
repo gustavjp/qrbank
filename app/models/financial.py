@@ -34,7 +34,11 @@ class FinancialTransaction(Base):
     __tablename__ = "financial_transactions"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
-    display_number: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    display_number: Mapped[int] = mapped_column(
+        BigInteger,
+        nullable=False,
+        server_default=text("nextval('financial_transaction_display_number_seq')"),
+    )
     classroom_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
     enrollment_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
     financial_request_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
