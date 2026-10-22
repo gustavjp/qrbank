@@ -38,6 +38,34 @@
 <p><strong>{{ total_count }}</strong> total · <strong>{{ positive_count }}</strong> positive · <strong>{{ negative_count }}</strong> negative</p>
 <p class="muted">Counts include all pages and behavior events without point changes. Reversing points does not erase a recorded behavior event.</p>
 
+<h2>Weekly behavior trend (8 weeks)</h2>
+<p class="muted">Classroom-local Monday–Sunday weeks, {{ trend.starts_on.isoformat() }} through {{ trend.ends_on.isoformat() }} ({{ trend.timezone_name }}). The chart uses the selected filters and shows only these eight weeks; the summary above covers all matching events.</p>
+<p><strong>{{ trend.total_count }}</strong> events in this chart window: <strong>{{ trend.positive_count }}</strong> positive and <strong>{{ trend.negative_count }}</strong> negative. Counts are events, not points.</p>
+<div style="display:flex; flex-wrap:wrap; gap:1rem; font-size:.9rem; margin-bottom:.75rem;">
+  <span><span aria-hidden="true" style="display:inline-block; width:.8rem; height:.8rem; border-radius:2px; background:#17804f;"></span> Positive</span>
+  <span><span aria-hidden="true" style="display:inline-block; width:.8rem; height:.8rem; border-radius:2px; background:#b44c24;"></span> Negative</span>
+</div>
+<div aria-label="Weekly positive and negative behavior event chart" style="display:grid; gap:.85rem;">
+  {% for week in trend.weeks %}
+  <div data-week-start="{{ week.starts_on.isoformat() }}" data-positive-count="{{ week.positive_count }}" data-negative-count="{{ week.negative_count }}">
+    <strong style="font-size:.9rem;">Week of {{ week.starts_on.strftime("%b %d, %Y") }}</strong>
+    <div style="display:grid; grid-template-columns:4.5rem minmax(0, 1fr) 2rem; gap:.25rem .5rem; align-items:center; margin-top:.25rem; font-size:.85rem;">
+      <span>Positive</span>
+      <div style="height:.8rem; background:#eff4f1; border-radius:3px; overflow:hidden;">
+        <div style="height:100%; width:{{ (100 * week.positive_count / trend.max_count)|round(0)|int }}%; background:#17804f;"></div>
+      </div>
+      <span>{{ week.positive_count }}</span>
+      <span>Negative</span>
+      <div style="height:.8rem; background:#f8f0ed; border-radius:3px; overflow:hidden;">
+        <div style="height:100%; width:{{ (100 * week.negative_count / trend.max_count)|round(0)|int }}%; background:#b44c24;"></div>
+      </div>
+      <span>{{ week.negative_count }}</span>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+<p class="muted">Zero-point behavior events count. Financial reversals do not remove events from this trend.</p>
+
 <p><a href="{{ export_url }}">Download matching behavior events (CSV)</a></p>
 <p><a href="/classrooms/{{ classroom.id }}/behavior/reasons">View and manage behavior reasons</a></p>
 
