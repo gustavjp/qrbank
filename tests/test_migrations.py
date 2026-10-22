@@ -90,10 +90,11 @@ def create_transaction(
             """
             INSERT INTO financial_transactions
               (id, classroom_id, enrollment_id, financial_request_id, transaction_type, source,
-               amount, balance_before, balance_after, student_code_snapshot, reverses_transaction_id)
+               amount, balance_before, balance_after, student_code_snapshot, reverses_transaction_id,
+               manual_category)
             VALUES
               (:id, :classroom_id, :enrollment_id, :request_id, :transaction_type, 'manual',
-               :amount, :before, :after, :student_code, :reverses_transaction_id)
+               :amount, :before, :after, :student_code, :reverses_transaction_id, :manual_category)
             """
         ),
         {
@@ -102,6 +103,7 @@ def create_transaction(
             "enrollment_id": enrollment_id,
             "request_id": request_id,
             "transaction_type": transaction_type,
+            "manual_category": "general" if transaction_type == "manual" else None,
             "amount": amount,
             "before": before,
             "after": before + amount,
@@ -141,7 +143,7 @@ def test_schema_is_at_head(engine) -> None:
 
     with engine.connect() as conn:
         revision = conn.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
-    assert revision == "0010_financial_hardening"
+    assert revision == "0011_manual_financial_category"
 
 
 def test_classroom_starting_balance_default_is_zero(engine) -> None:
@@ -273,9 +275,9 @@ def test_financial_balance_arithmetic_is_enforced(engine) -> None:
                     """
                     INSERT INTO financial_transactions
                       (id,classroom_id,enrollment_id,financial_request_id,transaction_type,source,
-                       amount,balance_before,balance_after,student_code_snapshot)
+                       amount,balance_before,balance_after,student_code_snapshot,manual_category)
                     VALUES
-                      (:id,:c,:e,:r,'manual','manual',5,0,99,'01')
+                      (:id,:c,:e,:r,'manual','manual',5,0,99,'01','general')
                     """
                 ),
                 {"id": u(), "c": classroom_id, "e": enrollment_id, "r": request_id},
@@ -412,3 +414,35 @@ def test_named_migration_identifiers_fit_postgresql_limit() -> None:
         for identifier in re.findall(r'"([A-Za-z0-9_]+)"', path.read_text()):
             if identifier.startswith(prefixes):
                 assert len(identifier) <= 63, f"{path}: {identifier}"
+
+
+def test_manual_financial_category_is_required_and_constrained(engine) -> None:
+    with engine.begin() as conn:
+        classroom_id = create_classroom(conn)
+        _, enrollment_id = create_student_and_enrollment(conn, classroom_id, "CAT")
+
+    for transaction_type, category in [
+        ("manual", None),
+        ("manual", "not_a_category"),
+        ("action", "general"),
+    ]:
+        with pytest.raises(IntegrityError):
+            with engine.begin() as conn:
+                request_id = create_financial_request(conn, classroom_id)
+                conn.execute(
+                    text(
+                        """
+                        INSERT INTO financial_transactions
+                          (id,classroom_id,enrollment_id,financial_request_id,
+                           transaction_type,source,amount,balance_before,balance_after,
+                           student_code_snapshot,manual_category)
+                        VALUES
+                          (:id,:c,:e,:r,:type,'manual',1,0,1,'CAT',:category)
+                        """
+                    ),
+                    {
+                        "id": u(), "c": classroom_id, "e": enrollment_id,
+                        "r": request_id, "type": transaction_type,
+                        "category": category,
+                    },
+                )

@@ -5,6 +5,9 @@
 <h1>{{ student.display_name or ("Student " ~ enrollment.student_code) }}</h1>
 <p class="muted">Student code: {{ enrollment.student_code }} · {{ "Active" if enrollment.active else "Inactive" }}</p>
 {% if saved %}<p class="success">Student information saved.</p>{% endif %}
+{% if posted %}<p class="success">Manual transaction posted and recorded in the ledger.</p>{% endif %}
+{% if replayed %}<p class="success">This request was already processed; no duplicate transaction was posted.</p>{% endif %}
+{% if manual_error %}<p class="error" role="alert">{{ manual_error }}</p>{% endif %}
 
 <div style="border:1px solid #dfe5ec; border-radius:10px; padding:1rem; margin:1rem 0;">
   <div class="muted">Current balance</div>
@@ -41,6 +44,35 @@
 {% endif %}
 {% endif %}
 
+{% if can_manage and enrollment.active %}
+<h2>Manual transaction</h2>
+<form method="post" action="/classrooms/{{ classroom.id }}/students/{{ enrollment.id }}/transactions/manual">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+  <input type="hidden" name="request_id" value="{{ manual_request_id }}">
+  <label>Operation
+    <select name="direction" required>
+      <option value="credit">Add points</option>
+      <option value="debit">Subtract points</option>
+    </select>
+  </label>
+  <label>Points (whole number)
+    <input type="number" name="points" min="1" max="2147483647" step="1" required>
+  </label>
+  <label>Category
+    <select name="category" required>
+      <option value="general">General</option>
+      <option value="behavior_positive">Positive behavior (add only)</option>
+      <option value="behavior_negative">Negative behavior (subtract only)</option>
+    </select>
+  </label>
+  <label>Reason / note
+    <input type="text" name="note" maxlength="500" required>
+  </label>
+  <button class="primary" type="submit">Post transaction</button>
+</form>
+<p class="muted">Posting changes the balance immediately and creates a permanent ledger entry. Use a new request for each intended transaction.</p>
+{% endif %}
+
 <h2>Transaction history</h2>
 {% if transactions %}
   <div style="display:grid; gap:.6rem;">
@@ -50,6 +82,9 @@
         · {{ tx.transaction_type }}
         · {% if tx.amount > 0 %}+{% endif %}{{ tx.amount }}
         <div class="muted">Balance {{ tx.balance_before }} → {{ tx.balance_after }}</div>
+        {% if tx.manual_category %}<div>Category: {{ tx.manual_category | replace("_", " ") | title }}</div>{% endif %}
+        {% if tx.note %}<div>Note: {{ tx.note }}</div>{% endif %}
+        <div class="muted">{{ tx.occurred_at.strftime("%Y-%m-%d %H:%M UTC") }} · Source: {{ tx.source }}</div>
       </div>
     {% endfor %}
   </div>

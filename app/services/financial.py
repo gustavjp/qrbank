@@ -395,3 +395,165 @@ def post_scanned_action(
     }
     db.flush()
     return _scan_posting_result(db, request, replayed=False)
+
+
+class ManualTransactionValidationError(ValueError):
+    pass
+
+
+class ManualEnrollmentNotFoundError(LookupError):
+    pass
+
+
+MANUAL_CATEGORIES = frozenset({"general", "behavior_positive", "behavior_negative"})
+
+
+@dataclass(frozen=True)
+class ManualPostingResult:
+    transaction: FinancialTransaction | None
+    replayed: bool
+    rejection_code: str | None
+    balance_after: int
+
+
+def _manual_posting_result(
+    db: Session, request: FinancialRequest, *, replayed: bool,
+) -> ManualPostingResult:
+    response = request.response_json
+    if response is None:
+        raise FinancialIntegrityError("manual request has no persisted result")
+    transaction_id = response.get("transaction_id")
+    transaction = (
+        _existing_transaction_for_request(db, request_id=request.id)
+        if transaction_id else None
+    )
+    if transaction is not None and (
+        str(transaction.id) != transaction_id
+        or transaction.classroom_id != request.classroom_id
+        or transaction.transaction_type != "manual"
+    ):
+        raise FinancialIntegrityError("manual request ledger result is mismatched")
+    if (request.status == "completed") != (transaction is not None):
+        raise FinancialIntegrityError("manual financial request/ledger state is inconsistent")
+    return ManualPostingResult(
+        transaction=transaction, replayed=replayed,
+        rejection_code=request.rejection_code,
+        balance_after=response["balance_after"],
+    )
+
+
+def post_manual_transaction(
+    db: Session,
+    *,
+    actor_user_id: uuid.UUID,
+    classroom_id: uuid.UUID,
+    enrollment_id: uuid.UUID,
+    direction: str,
+    points: int,
+    category: str,
+    note: str,
+    request_id: uuid.UUID,
+) -> ManualPostingResult:
+    """Post an auditable manual entry in the caller's transaction.
+
+    Amount/sign, category and note are validated server-side. The enrollment
+    row lock serializes this writer with QR and opening-balance writers.
+    """
+    if direction not in {"credit", "debit"}:
+        raise ManualTransactionValidationError("choose add or subtract")
+    if type(points) is not int or not 1 <= points <= 2**31 - 1:
+        raise ManualTransactionValidationError("points must be a positive whole number within the supported range")
+    if category not in MANUAL_CATEGORIES:
+        raise ManualTransactionValidationError("choose a valid category")
+    if category == "behavior_positive" and direction != "credit":
+        raise ManualTransactionValidationError("positive behavior must add points")
+    if category == "behavior_negative" and direction != "debit":
+        raise ManualTransactionValidationError("negative behavior must subtract points")
+    if not isinstance(note, str) or not 1 <= len(note.strip()) <= 500:
+        raise ManualTransactionValidationError("enter a reason of 1–500 characters")
+    note = note.strip()
+
+    access = require_classroom_access(
+        db, user_id=actor_user_id, classroom_id=classroom_id,
+    )
+    if access.membership.role not in {"owner", "teacher"}:
+        raise ClassroomPermissionError("owner or teacher permission is required to post points")
+
+    amount = points if direction == "credit" else -points
+    request, replayed = _claim_request(
+        db, classroom_id=classroom_id, actor_user_id=actor_user_id,
+        idempotency_key=str(request_id), request_kind="manual",
+        request_fingerprint=_fingerprint([
+            "manual", str(classroom_id), str(actor_user_id),
+            str(enrollment_id), str(amount), category, note,
+        ]),
+    )
+    if replayed:
+        if request.request_kind != "manual" or request.actor_user_id != actor_user_id:
+            raise FinancialIdempotencyConflictError("request ID belongs to another operation")
+        return _manual_posting_result(db, request, replayed=True)
+
+    enrollment = db.scalar(
+        select(Enrollment).where(
+            Enrollment.id == enrollment_id,
+            Enrollment.classroom_id == classroom_id,
+            Enrollment.active.is_(True),
+        ).with_for_update().execution_options(populate_existing=True)
+    )
+    if enrollment is None:
+        raise ManualEnrollmentNotFoundError("active student enrollment not found")
+
+    settings = db.get(ClassroomSettings, classroom_id)
+    if settings is None:
+        raise FinancialIntegrityError("classroom settings not found")
+
+    before = enrollment.current_balance
+    after = before + amount
+
+    def reject(code: str) -> ManualPostingResult:
+        request.status = "rejected"
+        request.rejection_code = code
+        request.response_json = {"transaction_id": None, "balance_after": before}
+        db.flush()
+        return _manual_posting_result(db, request, replayed=False)
+
+    if after < 0 and not settings.allow_negative_balance:
+        return reject("insufficient_balance")
+    if not -(2**31) <= after <= 2**31 - 1:
+        return reject("balance_out_of_range")
+
+    transaction = FinancialTransaction(
+        id=uuid.uuid4(),
+        classroom_id=classroom_id,
+        enrollment_id=enrollment_id,
+        financial_request_id=request.id,
+        transaction_type="manual",
+        source="manual",
+        amount=amount,
+        balance_before=before,
+        balance_after=after,
+        actor_user_id=actor_user_id,
+        note=note,
+        manual_category=category,
+        student_code_snapshot=enrollment.student_code,
+    )
+    db.add(transaction)
+    enrollment.current_balance = after
+    db.flush()
+
+    if category in {"behavior_positive", "behavior_negative"}:
+        db.add(BehaviorEvent(
+            id=uuid.uuid4(), classroom_id=classroom_id,
+            enrollment_id=enrollment_id,
+            behavior_type="positive" if category == "behavior_positive" else "negative",
+            financial_transaction_id=transaction.id,
+            created_by_user_id=actor_user_id,
+        ))
+        db.flush()
+
+    request.response_json = {
+        "transaction_id": str(transaction.id),
+        "balance_after": after,
+    }
+    db.flush()
+    return _manual_posting_result(db, request, replayed=False)
