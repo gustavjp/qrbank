@@ -5,6 +5,7 @@ from fastapi import FastAPI, HTTPException, status
 from app.database import database_is_ready
 from app.routes.auth import router as auth_router
 from app.routes.classrooms import router as classroom_router
+from app.routes.students import router as student_router
 
 
 app = FastAPI(
@@ -16,6 +17,7 @@ app = FastAPI(
 
 app.include_router(auth_router)
 app.include_router(classroom_router)
+app.include_router(student_router)
 
 
 @app.get("/health", tags=["system"])
