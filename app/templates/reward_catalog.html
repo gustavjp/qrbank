@@ -14,12 +14,22 @@
   <div style="border-bottom:1px solid #dfe5ec; padding:.6rem 0;">
     <strong>{{ reward.reward_code }} — {{ reward.name }}</strong>
     <div>{{ reward.price_points }} points · {{ reward.reward_type|title }} · {{ "Active" if reward.active else "Inactive" }}</div>
+    {% if availability_windows[reward.id][0] or availability_windows[reward.id][1] %}
+      <div class="muted">Purchase window ({{ classroom_timezone }}):
+        {{ availability_windows[reward.id][0]|replace('T', ' ') if availability_windows[reward.id][0] else 'Any start' }} →
+        {{ availability_windows[reward.id][1]|replace('T', ' ') if availability_windows[reward.id][1] else 'No end' }}
+      </div>
+    {% endif %}
+    {% if availability[reward.id] == "not_yet_available" %}<p class="muted">Scheduled — purchasing has not started.</p>{% endif %}
+    {% if availability[reward.id] == "no_longer_available" %}<p class="muted">Purchase window has ended.</p>{% endif %}
     <div>{% if reward.inventory_tracking %}Stock: {{ reward.quantity_available }}{% else %}Stock not tracked{% endif %}
       · <a href="/classrooms/{{ classroom.id }}/rewards/{{ reward.id }}/inventory">{{ "Manage" if can_manage else "View" }} inventory</a>
     </div>
     {% if reward.description %}<p class="muted">{{ reward.description }}</p>{% endif %}
     {% if can_manage and reward.active and enrollments %}
-      {% if reward.inventory_tracking and reward.quantity_available < 1 %}
+      {% if availability[reward.id] != "available" %}
+        <p class="muted">Purchasing is unavailable for this reward.</p>
+      {% elif reward.inventory_tracking and reward.quantity_available < 1 %}
         <p class="muted">Out of stock</p>
       {% else %}
         <form method="post" action="/classrooms/{{ classroom.id }}/rewards/{{ reward.id }}/purchase">

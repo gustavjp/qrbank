@@ -29,7 +29,11 @@
     <div style="border-bottom:1px solid #dfe5ec; padding:.6rem 0;">
       <strong>{{ reward.reward_code }} — {{ reward.name }}</strong>
       <div>{{ reward.price_points }} points · {{ reward.reward_type|title }}</div>
-      {% if reward.inventory_tracking and reward.quantity_available < 1 %}
+      {% if availability[reward.id] == "not_yet_available" %}
+        <p class="muted">Scheduled — not yet available for purchase.</p>
+      {% elif availability[reward.id] == "no_longer_available" %}
+        <p class="muted">This reward's purchase window has ended.</p>
+      {% elif reward.inventory_tracking and reward.quantity_available < 1 %}
         <p class="muted">Out of stock</p>
       {% else %}
         <form method="post" action="/classrooms/{{ classroom.id }}/students/{{ enrollment.id }}/rewards/purchase">

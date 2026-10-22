@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Callable
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request, status
 from fastapi.responses import RedirectResponse
@@ -14,6 +15,7 @@ from app.csrf import csrf_token_for_request, set_csrf_cookie, validate_csrf
 from app.database import get_db
 from app.models.auth import User
 from app.models.audit import AdminAuditEvent
+from app.models.classroom import ClassroomSettings
 from app.models.reward_purchase import RewardInventoryEvent
 from app.services.classrooms import ClassroomNotFoundError, ClassroomPermissionError
 from app.services.reward_inventory import (
@@ -21,8 +23,10 @@ from app.services.reward_inventory import (
     enable_reward_inventory,
 )
 from app.services.rewards import (
-    MANAGER_ROLES, RewardNotFoundError, RewardValidationError,
-    create_reward, get_reward, list_rewards, set_reward_active, update_reward,
+    MANAGER_ROLES, RewardAvailabilityConflictError, RewardNotFoundError,
+    RewardValidationError, classroom_local_time, create_reward,
+    get_reward, list_rewards, reward_availability_status,
+    set_reward_active, set_reward_availability, update_reward,
 )
 from app.models.student import Enrollment
 from app.web import templates
@@ -66,6 +70,9 @@ def _submit(
     except RewardValidationError as exc:
         db.rollback()
         raise HTTPException(status_code=400, detail=str(exc))
+    except RewardAvailabilityConflictError as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail=str(exc))
     except RewardInventoryConflictError as exc:
         db.rollback()
         raise HTTPException(status_code=409, detail=str(exc))
@@ -91,11 +98,25 @@ def reward_catalog(
         Enrollment.classroom_id == classroom_id,
         Enrollment.active.is_(True),
     ).order_by(Enrollment.student_code))) if can_manage else []
+    timezone_settings = db.get(ClassroomSettings, classroom_id)
+    timezone_name = timezone_settings.timezone if timezone_settings else "America/New_York"
+    now = datetime.now(timezone.utc)
     return _page(request, "reward_catalog.html", {
         "classroom": catalog.access.classroom,
         "rewards": catalog.rewards,
         "can_manage": can_manage,
         "enrollments": enrollments,
+        "availability": {
+            reward.id: reward_availability_status(reward, now)
+            for reward in catalog.rewards
+        },
+        "availability_windows": {
+            reward.id: (
+                classroom_local_time(reward.available_from, timezone_name),
+                classroom_local_time(reward.available_until, timezone_name),
+            ) for reward in catalog.rewards
+        },
+        "classroom_timezone": timezone_name,
         "purchase_request_ids": {r.id: uuid.uuid4() for r in catalog.rewards},
         "purchased": bool(purchased), "replayed": bool(replayed),
     })
@@ -124,7 +145,8 @@ def new_reward(
 @router.get("/{reward_id}/edit")
 def edit_reward_page(
     classroom_id: uuid.UUID, reward_id: uuid.UUID,
-    request: Request, db: Session = Depends(get_db),
+    request: Request, availability_saved: int = 0,
+    db: Session = Depends(get_db),
 ):
     user = _user(request, db)
     try:
@@ -136,8 +158,14 @@ def edit_reward_page(
         raise HTTPException(status_code=404, detail="classroom reward not found")
     if access.membership.role not in MANAGER_ROLES:
         raise HTTPException(status_code=403, detail="owner or teacher permission is required")
+    timezone_settings = db.get(ClassroomSettings, classroom_id)
+    timezone_name = timezone_settings.timezone if timezone_settings else "America/New_York"
     return _page(request, "reward_edit.html", {
         "classroom": access.classroom, "reward": reward,
+        "availability_saved": bool(availability_saved),
+        "classroom_timezone": timezone_name,
+        "available_from_local": classroom_local_time(reward.available_from, timezone_name),
+        "available_until_local": classroom_local_time(reward.available_until, timezone_name),
     })
 
 
@@ -175,6 +203,29 @@ def change_reward_status(
             reward_id=reward_id, active=active,
         ),
         f"/classrooms/{classroom_id}/rewards",
+    )
+
+
+@router.post("/{reward_id}/availability")
+def edit_reward_availability(
+    classroom_id: uuid.UUID, reward_id: uuid.UUID, request: Request,
+    available_from_local: str = Form(""), available_until_local: str = Form(""),
+    expected_from: str = Form(""), expected_until: str = Form(""),
+    note: str | None = Form(None), csrf_token: str = Form(...),
+    db: Session = Depends(get_db),
+):
+    user = _user(request, db)
+    return _submit(
+        request, db, csrf_token,
+        lambda: set_reward_availability(
+            db, user_id=user.id, classroom_id=classroom_id,
+            reward_id=reward_id,
+            available_from_local=available_from_local,
+            available_until_local=available_until_local,
+            expected_from=expected_from, expected_until=expected_until,
+            note=note,
+        ),
+        f"/classrooms/{classroom_id}/rewards/{reward_id}/edit?availability_saved=1",
     )
 
 

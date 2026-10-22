@@ -44,6 +44,7 @@ The current application includes:
 - coordinated reward refunds with exact linked reversal credits, cancelled purchase state, and atomic stock restoration when the original purchase consumed inventory
 - owner/teacher reward fulfillment (redeem and reasoned reopening), immutable event history, optimistic stale-form protection, and classroom-wide status filtering
 - optional per-reward stock setup and reasoned stock-count adjustments, with tenant-scoped history, audit records, concurrency safeguards, and purchase/refund coordination
+- classroom-local optional reward purchase windows with audited schedule edits, DST validation, stale-form protection, and matching catalog/student-page availability states
 - classroom-configured positive/negative behavior reasons and audited post-scan reason/detail attachment, without financial ledger mutation
 - classroom-wide read-only ledger browsing with tenant-bound student/type/source/category/local-date filters and stable keyset pagination
 - authorized streaming CSV export of all filtered posted ledger entries, with immutable identifiers, numeric balances, local/UTC timestamps, and spreadsheet formula safeguards
@@ -186,6 +187,17 @@ Tracking cannot be switched off once enabled, because a future refund may
 need to restore stock from a prior purchase. Inventory changes never post
 financial ledger entries or change student balances.
 
+Teachers can also set optional purchase start and end times on each reward's
+Edit page. Form values are in the classroom's configured IANA timezone, and
+the system stores unambiguous UTC instants. Nonexistent and ambiguous times
+at daylight-saving clock changes are rejected. Either boundary may be blank;
+the start is inclusive and the end is exclusive. Invalid or reversed ranges
+and stale edit forms are rejected. Schedule changes append an administrative
+audit event without altering balances or historical purchases. The catalog
+and student reward-purchase page show when a reward is scheduled or no longer
+available, and suppress purchase forms accordingly; the central financial
+service independently enforces the same boundaries under row locks.
+
 Student detail pages show historical purchases and their fulfillment status.
 The classroom-wide Reward Purchases & Fulfillment page lists purchases by
 status and provides a per-purchase event history with timestamps, actors, and
@@ -212,8 +224,8 @@ be refunded using immutable purchase snapshots.
 Redeemed or already-cancelled purchases are not eligible for this workflow.
 Generic reversals of reward purchases, and generic undo of reward refund
 reversals, remain blocked because they would desynchronize purchase and
-inventory state. Disabling inventory tracking, undoing
-a refund, availability scheduling, and image uploads are separate milestones.
+inventory state. Disabling inventory tracking, undoing a refund, and image
+uploads are separate milestones.
 
 ## Classroom jobs
 
