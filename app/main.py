@@ -6,6 +6,7 @@ from app.database import database_is_ready
 from app.routes.actions import router as action_router
 from app.routes.auth import router as auth_router
 from app.routes.behavior import router as behavior_router
+from app.routes.behavior_reasons import router as behavior_reasons_router
 from app.routes.classrooms import router as classroom_router
 from app.routes.students import router as student_router
 from app.routes.scanner import router as scanner_router
@@ -22,6 +23,7 @@ app = FastAPI(
 app.include_router(action_router)
 app.include_router(auth_router)
 app.include_router(behavior_router)
+app.include_router(behavior_reasons_router)
 app.include_router(classroom_router)
 app.include_router(student_router)
 app.include_router(scanner_router)

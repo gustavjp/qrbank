@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% block title %}Behavior reasons · {{ classroom.name }} · QRBank{% endblock %}
+{% block content %}
+<p><a href="/classrooms/{{ classroom.id }}/behavior">← Behavior history</a></p>
+<h1>Behavior reasons</h1>
+<p class="muted">Classroom-specific positive and negative reasons. Deactivate reasons instead of deleting them; existing behavior events preserve their original reason snapshots.</p>
+
+<h2>Configured reasons</h2>
+{% if reasons %}
+  {% for reason in reasons %}
+  <div style="border:1px solid #dfe5ec; border-radius:8px; padding:.8rem; margin:.65rem 0;">
+    <strong>{{ reason.reason_code }} — {{ reason.name }}</strong>
+    <div>{{ reason.behavior_type|title }} · {{ "Active" if reason.active else "Inactive" }}</div>
+    {% if reason.description %}<p>{{ reason.description }}</p>{% endif %}
+    {% if can_manage %}
+      <form method="post" action="/classrooms/{{ classroom.id }}/behavior/reasons/{{ reason.id }}/edit">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <label>Code <input name="code" required maxlength="32" value="{{ reason.reason_code }}"></label>
+        <label>Name <input name="name" required maxlength="120" value="{{ reason.name }}"></label>
+        <label>Description <input name="description" maxlength="1000" value="{{ reason.description or '' }}"></label>
+        <p class="muted">The positive/negative type cannot be changed after creation.</p>
+        <button class="secondary" type="submit">Save changes</button>
+      </form>
+      <form method="post" action="/classrooms/{{ classroom.id }}/behavior/reasons/{{ reason.id }}/active">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <input type="hidden" name="active" value="{{ 'false' if reason.active else 'true' }}">
+        <button class="secondary" type="submit">{{ "Deactivate" if reason.active else "Reactivate" }}</button>
+      </form>
+    {% endif %}
+  </div>
+  {% endfor %}
+{% else %}
+  <p class="muted">No behavior reasons configured yet.</p>
+{% endif %}
+
+{% if can_manage %}
+  <h2>Create reason</h2>
+  <form method="post" action="/classrooms/{{ classroom.id }}/behavior/reasons/new">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <label>Reason code <input name="code" required maxlength="32" placeholder="HELP"></label>
+    <label>Name <input name="name" required maxlength="120" placeholder="Helping others"></label>
+    <label>Type
+      <select name="behavior_type" required>
+        {% for kind in types %}<option value="{{ kind }}">{{ kind|title }}</option>{% endfor %}
+      </select>
+    </label>
+    <label>Description (optional) <input name="description" maxlength="1000"></label>
+    <button class="primary" type="submit">Create reason</button>
+  </form>
+{% else %}
+  <p class="muted">Only classroom owners and teachers can configure reasons.</p>
+{% endif %}
+{% endblock %}
