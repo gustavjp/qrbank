@@ -12,7 +12,14 @@ from sqlalchemy.orm import Session
 from app.auth_context import current_user_from_request
 from app.csrf import csrf_token_for_request, set_csrf_cookie, validate_csrf
 from app.database import get_db
+from app.models.auth import User
+from app.models.audit import AdminAuditEvent
+from app.models.reward_purchase import RewardInventoryEvent
 from app.services.classrooms import ClassroomNotFoundError, ClassroomPermissionError
+from app.services.reward_inventory import (
+    RewardInventoryConflictError, adjust_reward_inventory,
+    enable_reward_inventory,
+)
 from app.services.rewards import (
     MANAGER_ROLES, RewardNotFoundError, RewardValidationError,
     create_reward, get_reward, list_rewards, set_reward_active, update_reward,
@@ -59,6 +66,9 @@ def _submit(
     except RewardValidationError as exc:
         db.rollback()
         raise HTTPException(status_code=400, detail=str(exc))
+    except RewardInventoryConflictError as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail=str(exc))
     except IntegrityError:
         db.rollback()
         raise HTTPException(status_code=409, detail="reward code is already in use")
@@ -165,4 +175,82 @@ def change_reward_status(
             reward_id=reward_id, active=active,
         ),
         f"/classrooms/{classroom_id}/rewards",
+    )
+
+
+@router.get("/{reward_id}/inventory")
+def reward_inventory_page(
+    classroom_id: uuid.UUID, reward_id: uuid.UUID, request: Request,
+    changed: int = 0, db: Session = Depends(get_db),
+):
+    user = _user(request, db)
+    try:
+        access, reward = get_reward(
+            db, user_id=user.id, classroom_id=classroom_id, reward_id=reward_id,
+        )
+    except (ClassroomNotFoundError, RewardNotFoundError):
+        raise HTTPException(status_code=404, detail="classroom reward not found")
+    events = list(db.scalars(select(RewardInventoryEvent).where(
+        RewardInventoryEvent.classroom_id == classroom_id,
+        RewardInventoryEvent.reward_id == reward.id,
+    ).order_by(
+        RewardInventoryEvent.occurred_at.desc(),
+        RewardInventoryEvent.id.desc(),
+    )))
+    setups = list(db.scalars(select(AdminAuditEvent).where(
+        AdminAuditEvent.classroom_id == classroom_id,
+        AdminAuditEvent.target_type == "reward",
+        AdminAuditEvent.target_id == reward.id,
+        AdminAuditEvent.event_type == "reward_inventory_enabled",
+    ).order_by(AdminAuditEvent.occurred_at.desc(), AdminAuditEvent.id.desc())))
+    actor_ids = {
+        actor_id for actor_id in [
+            *(event.actor_user_id for event in events),
+            *(event.actor_user_id for event in setups),
+        ] if actor_id is not None
+    }
+    actors = {u.id: u.email for u in db.scalars(select(User).where(
+        User.id.in_(actor_ids),
+    ))} if actor_ids else {}
+    return _page(request, "reward_inventory.html", {
+        "classroom": access.classroom, "reward": reward,
+        "events": events, "setups": setups, "actors": actors,
+        "can_manage": access.membership.role in MANAGER_ROLES,
+        "changed": bool(changed),
+    })
+
+
+@router.post("/{reward_id}/inventory/enable")
+def enable_inventory(
+    classroom_id: uuid.UUID, reward_id: uuid.UUID, request: Request,
+    initial_quantity: int = Form(...), note: str = Form(...),
+    csrf_token: str = Form(...), db: Session = Depends(get_db),
+):
+    user = _user(request, db)
+    return _submit(
+        request, db, csrf_token,
+        lambda: enable_reward_inventory(
+            db, actor_user_id=user.id, classroom_id=classroom_id,
+            reward_id=reward_id, initial_quantity=initial_quantity, note=note,
+        ),
+        f"/classrooms/{classroom_id}/rewards/{reward_id}/inventory?changed=1",
+    )
+
+
+@router.post("/{reward_id}/inventory/adjust")
+def adjust_inventory(
+    classroom_id: uuid.UUID, reward_id: uuid.UUID, request: Request,
+    expected_quantity: int = Form(...), new_quantity: int = Form(...),
+    note: str = Form(...), csrf_token: str = Form(...),
+    db: Session = Depends(get_db),
+):
+    user = _user(request, db)
+    return _submit(
+        request, db, csrf_token,
+        lambda: adjust_reward_inventory(
+            db, actor_user_id=user.id, classroom_id=classroom_id,
+            reward_id=reward_id, expected_quantity=expected_quantity,
+            new_quantity=new_quantity, note=note,
+        ),
+        f"/classrooms/{classroom_id}/rewards/{reward_id}/inventory?changed=1",
     )

@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+{% block title %}Inventory · {{ reward.reward_code }} · QRBank{% endblock %}
+{% block content %}
+<p><a href="/classrooms/{{ classroom.id }}/rewards">← Classroom Rewards</a></p>
+<h1>Inventory: {{ reward.reward_code }} — {{ reward.name }}</h1>
+<p class="muted">Inventory changes do not modify student points or financial transactions. Purchases and refunds automatically change stock when tracking is enabled.</p>
+{% if changed %}<p class="success">Inventory saved with an audit record.</p>{% endif %}
+
+{% if reward.inventory_tracking %}
+  <h2>Available stock: {{ reward.quantity_available }}</h2>
+  {% if can_manage %}
+    <form method="post" action="/classrooms/{{ classroom.id }}/rewards/{{ reward.id }}/inventory/adjust">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <input type="hidden" name="expected_quantity" value="{{ reward.quantity_available }}">
+      <label>New total available count
+        <input type="number" name="new_quantity" min="0" max="2147483647" value="{{ reward.quantity_available }}" required>
+      </label>
+      <label>Reason for adjustment
+        <input name="note" type="text" maxlength="500" placeholder="Restocked, damaged item, physical recount…" required>
+      </label>
+      <button class="primary" type="submit">Save stock count</button>
+    </form>
+    <p class="muted">If a purchase or another adjustment changes stock while this form is open, refresh the page before trying again.</p>
+  {% endif %}
+{% else %}
+  <h2>Stock is not tracked</h2>
+  {% if can_manage %}
+    <p>Start tracking this reward's available quantity. Once enabled, tracking remains on so later purchase refunds can restore stock consistently.</p>
+    <form method="post" action="/classrooms/{{ classroom.id }}/rewards/{{ reward.id }}/inventory/enable">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <label>Initial available count
+        <input type="number" name="initial_quantity" min="0" max="2147483647" value="0" required>
+      </label>
+      <label>Reason / initial count source
+        <input name="note" type="text" maxlength="500" placeholder="Initial physical count" required>
+      </label>
+      <button class="primary" type="submit">Enable inventory tracking</button>
+    </form>
+  {% endif %}
+{% endif %}
+
+<h2>Stock movement history</h2>
+{% for setup in setups %}
+  <p class="muted">Tracking enabled at {{ setup.after_json.quantity_available }} available ·
+    {{ setup.occurred_at.strftime("%Y-%m-%d %H:%M UTC") }} ·
+    {{ actors.get(setup.actor_user_id, "System") }} · {{ setup.after_json.reason }}</p>
+{% endfor %}
+{% if events %}
+  <ul>
+    {% for event in events %}
+      <li>
+        {{ event.event_type|replace('_', ' ')|title }} ·
+        {{ event.quantity_before }} → {{ event.quantity_after }}
+        ({% if event.delta > 0 %}+{% endif %}{{ event.delta }}) ·
+        {{ event.occurred_at.strftime("%Y-%m-%d %H:%M UTC") }} ·
+        {{ actors.get(event.actor_user_id, "System") }}
+        {% if event.note %} · {{ event.note }}{% endif %}
+      </li>
+    {% endfor %}
+  </ul>
+{% else %}
+  <p class="muted">No stock movements yet. Starting at zero records the activation above without creating a zero-delta stock event.</p>
+{% endif %}
+{% endblock %}

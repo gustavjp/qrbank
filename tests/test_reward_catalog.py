@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 
+import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -13,9 +15,15 @@ from app.models.audit import AdminAuditEvent
 from app.models.classroom import Classroom, ClassroomMembership, ClassroomSettings
 from app.models.financial import FinancialRequest, FinancialTransaction
 from app.models.reward import Reward
+from app.models.reward_purchase import RewardInventoryEvent, RewardPurchase
+from app.models.student import Enrollment, Student
 from app.services.auth import (
     create_email_verification_token, create_user_session,
     register_user, verify_email_token,
+)
+from app.services.financial import post_reward_purchase, post_reward_refund
+from app.services.reward_inventory import (
+    RewardInventoryConflictError, adjust_reward_inventory, enable_reward_inventory,
 )
 
 
@@ -91,6 +99,38 @@ def _audit_events(engine, reward_id: uuid.UUID) -> list[AdminAuditEvent]:
             AdminAuditEvent.target_type == "reward",
             AdminAuditEvent.target_id == reward_id,
         ).order_by(AdminAuditEvent.occurred_at, AdminAuditEvent.id)))
+
+
+def _inventory_events(engine, reward_id: uuid.UUID) -> list[RewardInventoryEvent]:
+    with Session(engine) as db:
+        return list(db.scalars(select(RewardInventoryEvent).where(
+            RewardInventoryEvent.reward_id == reward_id,
+        ).order_by(RewardInventoryEvent.occurred_at, RewardInventoryEvent.id)))
+
+
+def _enable_stock(
+    client: TestClient, classroom_id: uuid.UUID, reward_id: uuid.UUID,
+    quantity: int = 0, note: str = "Initial count",
+):
+    client.get(f"/classrooms/{classroom_id}/rewards/{reward_id}/inventory")
+    return client.post(
+        f"/classrooms/{classroom_id}/rewards/{reward_id}/inventory/enable",
+        data={"initial_quantity": str(quantity), "note": note, "csrf_token": _csrf(client)},
+    )
+
+
+def _adjust_stock(
+    client: TestClient, classroom_id: uuid.UUID, reward_id: uuid.UUID,
+    *, expected: int, new: int, note: str = "Physical recount",
+):
+    client.get(f"/classrooms/{classroom_id}/rewards/{reward_id}/inventory")
+    return client.post(
+        f"/classrooms/{classroom_id}/rewards/{reward_id}/inventory/adjust",
+        data={
+            "expected_quantity": str(expected), "new_quantity": str(new),
+            "note": note, "csrf_token": _csrf(client),
+        },
+    )
 
 
 def test_create_catalog_in_two_classes_and_audit_without_financial_entries(engine):
@@ -310,3 +350,220 @@ def test_anonymous_reward_routes_require_login(engine):
         "code": "R99", "name": "No session", "reward_type": "other",
         "price_points": "1", "csrf_token": "missing",
     }).status_code == 401
+
+
+def test_enable_zero_stock_and_adjust_with_full_audit(engine):
+    client, owner = _client(engine)
+    classroom = _classroom(engine, owner)
+    assert _create(client, classroom).status_code == 303
+    reward_id = _reward(engine, classroom).id
+    page = client.get(f"/classrooms/{classroom}/rewards/{reward_id}/inventory")
+    assert page.status_code == 200 and "Enable inventory tracking" in page.text
+    assert "Manage inventory" in client.get(f"/classrooms/{classroom}/rewards").text
+
+    enabled = _enable_stock(client, classroom, reward_id, quantity=0)
+    assert enabled.status_code == 303 and "changed=1" in enabled.headers["location"]
+    reward = _reward(engine, classroom)
+    assert reward.inventory_tracking is True and reward.quantity_available == 0
+    assert not _inventory_events(engine, reward_id)  # Zero-delta events are forbidden by schema.
+
+    assert _adjust_stock(
+        client, classroom, reward_id, expected=0, new=5, note="Restocked supplies",
+    ).status_code == 303
+    assert _adjust_stock(
+        client, classroom, reward_id, expected=5, new=2, note="Removed damaged items",
+    ).status_code == 303
+    reward = _reward(engine, classroom)
+    assert reward.quantity_available == 2
+    movements = _inventory_events(engine, reward_id)
+    assert [(e.event_type, e.delta, e.quantity_before, e.quantity_after) for e in movements] == [
+        ("manual_adjustment", 5, 0, 5),
+        ("manual_adjustment", -3, 5, 2),
+    ]
+    assert [e.note for e in movements] == ["Restocked supplies", "Removed damaged items"]
+    assert all(e.actor_user_id == owner for e in movements)
+    audit = _audit_events(engine, reward_id)
+    assert [e.event_type for e in audit] == [
+        "reward_created", "reward_inventory_enabled",
+        "reward_inventory_adjusted", "reward_inventory_adjusted",
+    ]
+    assert audit[1].before_json == {
+        "inventory_tracking": False, "quantity_available": None,
+    }
+    assert audit[-1].after_json == {
+        "inventory_tracking": True, "quantity_available": 2,
+        "reason": "Removed damaged items",
+    }
+    history = client.get(f"/classrooms/{classroom}/rewards/{reward_id}/inventory")
+    assert "Removed damaged items" in history.text and "Restocked supplies" in history.text
+    assert "Available stock: 2" in history.text
+    with Session(engine) as db:
+        assert db.scalar(select(func.count()).select_from(FinancialTransaction).where(
+            FinancialTransaction.classroom_id == classroom,
+        )) == 0
+
+
+def test_inventory_initial_stock_validation_and_stale_forms(engine):
+    client, owner = _client(engine)
+    classroom = _classroom(engine, owner)
+    assert _create(client, classroom).status_code == 303
+    reward_id = _reward(engine, classroom).id
+    url = f"/classrooms/{classroom}/rewards/{reward_id}/inventory"
+    assert _adjust_stock(client, classroom, reward_id, expected=0, new=3).status_code == 409
+    assert _enable_stock(client, classroom, reward_id, quantity=-1).status_code == 400
+    assert _enable_stock(client, classroom, reward_id, quantity=2**31).status_code == 400
+    assert _enable_stock(client, classroom, reward_id, quantity=3, note=" ").status_code == 400
+    assert _enable_stock(client, classroom, reward_id, quantity=3).status_code == 303
+    assert _enable_stock(client, classroom, reward_id, quantity=3).status_code == 409
+    initial = _inventory_events(engine, reward_id)
+    assert len(initial) == 1
+    assert (initial[0].event_type, initial[0].delta, initial[0].quantity_after) == (
+        "initial_stock", 3, 3,
+    )
+    assert _adjust_stock(client, classroom, reward_id, expected=3, new=4).status_code == 303
+    assert _adjust_stock(client, classroom, reward_id, expected=3, new=5).status_code == 409
+    assert _adjust_stock(client, classroom, reward_id, expected=4, new=4).status_code == 409
+    assert _adjust_stock(client, classroom, reward_id, expected=4, new=-1).status_code == 400
+    assert _adjust_stock(client, classroom, reward_id, expected=4, new=2**31).status_code == 400
+    assert _adjust_stock(client, classroom, reward_id, expected=4, new=3, note=" ").status_code == 400
+    assert _adjust_stock(client, classroom, reward_id, expected=4, new=3, note="x" * 501).status_code == 400
+    assert client.post(url + "/adjust", data={
+        "expected_quantity": "4", "new_quantity": "1", "note": "Bad CSRF",
+        "csrf_token": "invalid",
+    }).status_code == 403
+    with Session(engine) as db:
+        assert db.get(Reward, reward_id).quantity_available == 4
+    assert len(_inventory_events(engine, reward_id)) == 2
+
+
+def test_reward_inventory_permissions_and_tenant_isolation(engine):
+    owner_client, owner = _client(engine)
+    teacher_client, teacher = _client(engine)
+    assistant_client, assistant = _client(engine)
+    other_client, other_owner = _client(engine)
+    classroom = _classroom(engine, owner)
+    foreign_classroom = _classroom(engine, other_owner)
+    assert _create(owner_client, classroom).status_code == 303
+    assert _create(other_client, foreign_classroom, code="R02").status_code == 303
+    reward_id = _reward(engine, classroom).id
+    foreign_reward = _reward(engine, foreign_classroom, "R02").id
+    with Session(engine) as db, db.begin():
+        db.add_all([
+            ClassroomMembership(
+                id=uuid.uuid4(), classroom_id=classroom, user_id=teacher,
+                role="teacher", created_by_user_id=owner,
+            ),
+            ClassroomMembership(
+                id=uuid.uuid4(), classroom_id=classroom, user_id=assistant,
+                role="assistant", created_by_user_id=owner,
+            ),
+        ])
+
+    path = f"/classrooms/{classroom}/rewards/{reward_id}/inventory"
+    assert _enable_stock(teacher_client, classroom, reward_id, quantity=2).status_code == 303
+    assistant_page = assistant_client.get(path)
+    assert assistant_page.status_code == 200
+    assert "Available stock: 2" in assistant_page.text
+    assert "Save stock count" not in assistant_page.text
+    assert _adjust_stock(assistant_client, classroom, reward_id, expected=2, new=3).status_code == 403
+    assert _adjust_stock(other_client, classroom, reward_id, expected=2, new=3).status_code == 404
+    assert other_client.get(path).status_code == 404
+    assert owner_client.get(
+        f"/classrooms/{classroom}/rewards/{foreign_reward}/inventory"
+    ).status_code == 404
+    assert _enable_stock(owner_client, classroom, foreign_reward, quantity=1).status_code == 404
+    assert TestClient(app, follow_redirects=False).post(path + "/adjust", data={
+        "expected_quantity": "2", "new_quantity": "1",
+        "note": "Unknown actor", "csrf_token": "invalid",
+    }).status_code == 401
+    assert _reward(engine, classroom).quantity_available == 2
+    assert len(_inventory_events(engine, reward_id)) == 1
+
+
+def test_inventory_update_and_purchase_use_same_locked_count(engine):
+    client, owner = _client(engine)
+    classroom = _classroom(engine, owner)
+    assert _create(client, classroom).status_code == 303
+    reward_id = _reward(engine, classroom).id
+    assert _enable_stock(client, classroom, reward_id, quantity=2).status_code == 303
+    enrollment_id, student_id = uuid.uuid4(), uuid.uuid4()
+    with Session(engine) as db, db.begin():
+        db.add(Student(id=student_id, display_name="Inventory Student"))
+        db.flush()
+        db.add(Enrollment(
+            id=enrollment_id, classroom_id=classroom,
+            student_id=student_id, student_code="01", current_balance=100,
+            active=True,
+        ))
+
+    def purchase():
+        with Session(engine) as db, db.begin():
+            return post_reward_purchase(
+                db, actor_user_id=owner, classroom_id=classroom,
+                enrollment_id=enrollment_id, reward_id=reward_id,
+                expected_price=25, request_id=uuid.uuid4(),
+            )
+
+    def adjustment():
+        try:
+            with Session(engine) as db, db.begin():
+                adjust_reward_inventory(
+                    db, actor_user_id=owner, classroom_id=classroom,
+                    reward_id=reward_id, expected_quantity=2,
+                    new_quantity=1, note="Correct physical stock",
+                )
+            return "adjusted"
+        except RewardInventoryConflictError:
+            return "stale"
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        purchase_future = pool.submit(purchase)
+        adjust_future = pool.submit(adjustment)
+        purchase_result, adjust_result = purchase_future.result(), adjust_future.result()
+    assert purchase_result.rejection_code is None
+    assert adjust_result in {"adjusted", "stale"}
+    with Session(engine) as db:
+        reward = db.get(Reward, reward_id)
+        purchase_record = db.scalar(select(RewardPurchase).where(
+            RewardPurchase.classroom_id == classroom,
+        ))
+        assert purchase_record is not None
+        assert db.get(Enrollment, enrollment_id).current_balance == 75
+        assert reward.quantity_available == (0 if adjust_result == "adjusted" else 1)
+
+    with Session(engine) as db, db.begin():
+        refund = post_reward_refund(
+            db, actor_user_id=owner, classroom_id=classroom,
+            enrollment_id=enrollment_id, purchase_id=purchase_record.id,
+            request_id=uuid.uuid4(), note="Refund for inventory integration",
+        )
+        assert refund.transaction is not None
+    with Session(engine) as db:
+        assert db.get(Enrollment, enrollment_id).current_balance == 100
+        assert db.get(Reward, reward_id).quantity_available == (
+            1 if adjust_result == "adjusted" else 2
+        )
+    events = _inventory_events(engine, reward_id)
+    assert len(events) == (4 if adjust_result == "adjusted" else 3)
+    assert any(e.event_type == "purchase_decrement" for e in events)
+    assert any(e.event_type == "refund_restore" for e in events)
+
+
+def test_inventory_transaction_rollback_reverts_count_and_events(engine):
+    client, owner = _client(engine)
+    classroom = _classroom(engine, owner)
+    assert _create(client, classroom).status_code == 303
+    reward_id = _reward(engine, classroom).id
+    assert _enable_stock(client, classroom, reward_id, quantity=1).status_code == 303
+    with pytest.raises(RuntimeError):
+        with Session(engine) as db, db.begin():
+            adjust_reward_inventory(
+                db, actor_user_id=owner, classroom_id=classroom,
+                reward_id=reward_id, expected_quantity=1,
+                new_quantity=10, note="Interrupted edit",
+            )
+            raise RuntimeError("abort stock change")
+    assert _reward(engine, classroom).quantity_available == 1
+    assert len(_inventory_events(engine, reward_id)) == 1
+    assert len(_audit_events(engine, reward_id)) == 2
+

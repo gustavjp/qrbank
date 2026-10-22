@@ -43,6 +43,7 @@ The current application includes:
 - idempotent purchase requests, immutable reward/price snapshots, fulfillment history, and optional stock decrement audit events
 - coordinated reward refunds with exact linked reversal credits, cancelled purchase state, and atomic stock restoration when the original purchase consumed inventory
 - owner/teacher reward fulfillment (redeem and reasoned reopening), immutable event history, optimistic stale-form protection, and classroom-wide status filtering
+- optional per-reward stock setup and reasoned stock-count adjustments, with tenant-scoped history, audit records, concurrency safeguards, and purchase/refund coordination
 - classroom-configured positive/negative behavior reasons and audited post-scan reason/detail attachment, without financial ledger mutation
 - classroom-wide read-only ledger browsing with tenant-bound student/type/source/category/local-date filters and stable keyset pagination
 - authorized streaming CSV export of all filtered posted ledger entries, with immutable identifiers, numeric balances, local/UTC timestamps, and spreadsheet formula safeguards
@@ -54,7 +55,7 @@ The current application includes:
 - health and readiness endpoints
 - PostgreSQL-backed automated tests
 
-Weekly job wages and student allowances have external scheduler commands, but no scheduler is provisioned or enabled automatically. Inventory setup/adjustments, refund undo, reward images, mobile camera integration, password reset, and a production email provider are not implemented yet. Scan Mode can post QR Action/Quick Action transactions to the ledger.
+Weekly job wages and student allowances have external scheduler commands, but no scheduler is provisioned or enabled automatically. Inventory tracking cannot yet be disabled after activation; refund undo, reward images, mobile camera integration, password reset, and a production email provider are not implemented yet. Scan Mode can post QR Action/Quick Action transactions to the ledger.
 
 ## Local setup
 
@@ -171,6 +172,20 @@ inventory event. Duplicate request IDs replay the original result; reusing
 an ID with different purchase inputs is rejected. Rejected attempts do not
 deduct money or create a purchase, and keep an idempotent rejection record.
 
+The Inventory link on each reward provides optional stock tracking. An owner
+or teacher can enable it with a nonnegative initial physical count and a
+required reason, then make reasoned adjustments by setting an exact new
+available count. Both operations run under a PostgreSQL reward row lock and
+append administrative audit entries; nonzero changes also append an inventory
+movement with before/after quantities and actor. Enabling with zero stock is
+recorded in the administrative audit without a zero-delta inventory event,
+which the database deliberately forbids. A stale adjustment is rejected if
+another purchase, refund, or edit changed stock since the form was opened.
+Assistants can view inventory and movement history but cannot change it.
+Tracking cannot be switched off once enabled, because a future refund may
+need to restore stock from a prior purchase. Inventory changes never post
+financial ledger entries or change student balances.
+
 Student detail pages show historical purchases and their fulfillment status.
 The classroom-wide Reward Purchases & Fulfillment page lists purchases by
 status and provides a per-purchase event history with timestamps, actors, and
@@ -197,7 +212,7 @@ be refunded using immutable purchase snapshots.
 Redeemed or already-cancelled purchases are not eligible for this workflow.
 Generic reversals of reward purchases, and generic undo of reward refund
 reversals, remain blocked because they would desynchronize purchase and
-inventory state. Inventory configuration/adjustments, undoing
+inventory state. Disabling inventory tracking, undoing
 a refund, availability scheduling, and image uploads are separate milestones.
 
 ## Classroom jobs
