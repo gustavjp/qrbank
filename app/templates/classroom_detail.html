@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block title %}{{ classroom.name }} · QRBank{% endblock %}
+{% block content %}
+<p><a href="/dashboard">← Dashboard</a></p>
+<h1>{{ classroom.name }}</h1>
+<p class="muted">{{ classroom.school_year }} · Your role: {{ access.membership.role }}</p>
+
+{% if is_active %}
+  <p class="success"><strong>Active classroom.</strong> Scanner and classroom operations will use this classroom context when those features are added.</p>
+{% else %}
+  <form method="post" action="/classrooms/{{ classroom.id }}/select">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <button class="primary" type="submit">Make this the active classroom</button>
+  </form>
+{% endif %}
+
+<h2>Current settings</h2>
+<p>Starting balance for new enrollments: <strong>{{ settings.starting_balance }}</strong></p>
+<p>Negative balances: <strong>{{ "Allowed" if settings.allow_negative_balance else "Not allowed" }}</strong></p>
+<p>Weekly allowance: <strong>{{ settings.weekly_allowance_amount }}</strong> {% if settings.weekly_allowance_enabled %}(enabled){% else %}(disabled){% endif %}</p>
+<p>Timezone: <strong>{{ settings.timezone }}</strong></p>
+
+<p class="links"><a href="/classrooms/{{ classroom.id }}/settings">View classroom settings</a></p>
+{% endblock %}

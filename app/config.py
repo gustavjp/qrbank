@@ -17,6 +17,7 @@ class Settings:
     environment: str
     public_base_url: str
     session_cookie_name: str
+    active_classroom_cookie_name: str
     session_ttl_seconds: int
     session_cookie_secure: bool
     csrf_cookie_name: str
@@ -34,6 +35,10 @@ def load_settings() -> Settings:
         environment=environment,
         public_base_url=os.getenv("QRBANK_PUBLIC_BASE_URL", "http://localhost:8000").rstrip("/"),
         session_cookie_name=os.getenv("QRBANK_SESSION_COOKIE_NAME", "qrbank_session"),
+        active_classroom_cookie_name=os.getenv(
+            "QRBANK_ACTIVE_CLASSROOM_COOKIE_NAME",
+            "qrbank_active_classroom",
+        ),
         session_ttl_seconds=int(os.getenv("QRBANK_SESSION_TTL_SECONDS", str(60 * 60 * 24 * 14))),
         session_cookie_secure=_env_bool(
             "QRBANK_SESSION_COOKIE_SECURE",

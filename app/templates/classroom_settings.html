@@ -1,0 +1,89 @@
+{% extends "base.html" %}
+{% block title %}Settings · {{ classroom.name }} · QRBank{% endblock %}
+{% block content %}
+<p><a href="/classrooms/{{ classroom.id }}">← {{ classroom.name }}</a></p>
+<h1>Classroom settings</h1>
+<p class="muted">Your role: {{ access.membership.role }}</p>
+{% if saved %}<p class="success">Settings saved.</p>{% endif %}
+{% if error %}<p class="error">{{ error }}</p>{% endif %}
+
+{% if can_edit %}
+<form method="post" action="/classrooms/{{ classroom.id }}/settings">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+
+  <h2>Classroom</h2>
+  <label>Name
+    <input type="text" name="name" required value="{{ classroom.name }}">
+  </label>
+  <label>School year
+    <input type="text" name="school_year" required value="{{ classroom.school_year }}">
+  </label>
+  <label>Timezone
+    <input type="text" name="timezone" required value="{{ settings.timezone }}" placeholder="America/New_York">
+  </label>
+  <label>Starting balance for newly created enrollments
+    <input type="number" name="starting_balance" required value="{{ settings.starting_balance }}">
+  </label>
+  <p class="muted">Changing this value does not rewrite existing student balances. Nonzero starting balances will be posted through the financial ledger when student enrollment is implemented.</p>
+
+  <h2>Weekly allowance</h2>
+  <label style="font-weight:400;">
+    <input style="width:auto;" type="checkbox" name="weekly_allowance_enabled" value="1" {% if settings.weekly_allowance_enabled %}checked{% endif %}>
+    Enable weekly allowance
+  </label>
+  <label>Amount
+    <input type="number" name="weekly_allowance_amount" required value="{{ settings.weekly_allowance_amount }}">
+  </label>
+  <label>Day (0=Monday, 6=Sunday)
+    <input type="number" name="weekly_allowance_day" min="0" max="6" required value="{{ settings.weekly_allowance_day }}">
+  </label>
+  <label>Local time
+    <input type="time" name="weekly_allowance_time" required value="{{ settings.weekly_allowance_time.strftime('%H:%M') }}">
+  </label>
+
+  <h2>Weekly job wages</h2>
+  <label style="font-weight:400;">
+    <input style="width:auto;" type="checkbox" name="weekly_wages_enabled" value="1" {% if settings.weekly_wages_enabled %}checked{% endif %}>
+    Enable weekly job wages
+  </label>
+  <label>Day (0=Monday, 6=Sunday)
+    <input type="number" name="weekly_wage_day" min="0" max="6" required value="{{ settings.weekly_wage_day }}">
+  </label>
+  <label>Local time
+    <input type="time" name="weekly_wage_time" required value="{{ settings.weekly_wage_time.strftime('%H:%M') }}">
+  </label>
+
+  <h2>Scanner and transaction behavior</h2>
+  <label style="font-weight:400;">
+    <input style="width:auto;" type="checkbox" name="sound_enabled" value="1" {% if settings.sound_enabled %}checked{% endif %}>
+    Sound enabled
+  </label>
+  <label>Duplicate scan window (seconds)
+    <input type="number" name="duplicate_scan_seconds" min="0" required value="{{ settings.duplicate_scan_seconds }}">
+  </label>
+  <label style="font-weight:400;">
+    <input style="width:auto;" type="checkbox" name="allow_negative_balance" value="1" {% if settings.allow_negative_balance %}checked{% endif %}>
+    Allow negative balances
+  </label>
+  <label>Student selection timeout (seconds)
+    <input type="number" name="student_selection_timeout_seconds" min="1" required value="{{ settings.student_selection_timeout_seconds }}">
+  </label>
+  <label style="font-weight:400;">
+    <input style="width:auto;" type="checkbox" name="confirm_normal_transactions" value="1" {% if settings.confirm_normal_transactions %}checked{% endif %}>
+    Confirm normal transactions
+  </label>
+  <label style="font-weight:400;">
+    <input style="width:auto;" type="checkbox" name="confirm_balance_reset" value="1" {% if settings.confirm_balance_reset %}checked{% endif %}>
+    Confirm balance reset
+  </label>
+
+  <button class="primary" type="submit">Save settings</button>
+</form>
+{% else %}
+  <p class="muted">Only the classroom owner can change settings in V1.</p>
+  <p>Timezone: <strong>{{ settings.timezone }}</strong></p>
+  <p>Starting balance: <strong>{{ settings.starting_balance }}</strong></p>
+  <p>Weekly allowance: <strong>{{ settings.weekly_allowance_amount }}</strong></p>
+  <p>Negative balances: <strong>{{ "Allowed" if settings.allow_negative_balance else "Not allowed" }}</strong></p>
+{% endif %}
+{% endblock %}

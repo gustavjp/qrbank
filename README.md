@@ -21,10 +21,14 @@ The current application includes:
 - CSRF-protected server-rendered forms
 - login/logout and protected dashboard foundation
 - classroom owner/membership creation
+- authenticated classroom listing and creation
+- active classroom selection
+- owner-only classroom settings management
+- strict server-side membership authorization for every classroom read/write
 - health and readiness endpoints
 - PostgreSQL-backed automated tests
 
-Student banking, QR scanning, financial service code, classroom-management pages, rewards UI, password reset, and a production email provider are intentionally not implemented yet.
+Student banking, QR scanning, financial service code, rewards UI, password reset, and a production email provider are intentionally not implemented yet.
 
 ## Local setup
 
@@ -92,6 +96,8 @@ The integration test suite requires a disposable PostgreSQL database. GitHub Act
 - session cookies default to Secure in production
 - state-changing web forms require CSRF validation
 - pending/unverified accounts cannot create authenticated sessions
+- the active-classroom cookie stores context only; it never grants access
+- classroom access is re-checked against active ClassroomMembership rows on the server
 
 ## Design documents
 
