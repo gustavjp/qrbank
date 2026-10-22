@@ -5,7 +5,7 @@ import uuid
 from dataclasses import dataclass
 from datetime import date
 
-from sqlalchemy import select
+from sqlalchemy import Select, select
 from sqlalchemy.orm import Session
 
 from app.models.audit import AdminAuditEvent
@@ -30,6 +30,12 @@ class StudentNotFoundError(LookupError):
 
 class StudentValidationError(ValueError):
     pass
+
+
+@dataclass(frozen=True)
+class EnrollmentSelection:
+    access: ClassroomAccess
+    statement: Select[tuple[Student, Enrollment]]
 
 
 @dataclass(frozen=True)
@@ -73,6 +79,28 @@ def _require_student_manager(
     return access
 
 
+def select_classroom_enrollments(
+    db: Session,
+    *,
+    user_id: uuid.UUID,
+    classroom_id: uuid.UUID,
+    include_inactive: bool = True,
+) -> EnrollmentSelection:
+    """Authorize a classroom-scoped roster query for listing or export."""
+    access = require_classroom_access(
+        db, user_id=user_id, classroom_id=classroom_id,
+    )
+    statement = (
+        select(Student, Enrollment)
+        .join(Enrollment, Enrollment.student_id == Student.id)
+        .where(Enrollment.classroom_id == classroom_id)
+        .order_by(Enrollment.student_code, Enrollment.id)
+    )
+    if not include_inactive:
+        statement = statement.where(Enrollment.active.is_(True))
+    return EnrollmentSelection(access=access, statement=statement)
+
+
 def list_enrollments(
     db: Session,
     *,
@@ -80,23 +108,12 @@ def list_enrollments(
     classroom_id: uuid.UUID,
     include_inactive: bool = True,
 ) -> tuple[ClassroomAccess, list[tuple[Student, Enrollment]]]:
-    access = require_classroom_access(
-        db,
-        user_id=user_id,
-        classroom_id=classroom_id,
+    selection = select_classroom_enrollments(
+        db, user_id=user_id, classroom_id=classroom_id,
+        include_inactive=include_inactive,
     )
-
-    statement = (
-        select(Student, Enrollment)
-        .join(Enrollment, Enrollment.student_id == Student.id)
-        .where(Enrollment.classroom_id == classroom_id)
-        .order_by(Enrollment.student_code)
-    )
-    if not include_inactive:
-        statement = statement.where(Enrollment.active.is_(True))
-
-    rows = db.execute(statement).all()
-    return access, [(student, enrollment) for student, enrollment in rows]
+    rows = db.execute(selection.statement).all()
+    return selection.access, [(student, enrollment) for student, enrollment in rows]
 
 
 def create_student_enrollment(
