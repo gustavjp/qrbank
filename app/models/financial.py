@@ -55,6 +55,7 @@ class FinancialTransaction(Base):
     )
     actor_user_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
     note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    manual_category: Mapped[str | None] = mapped_column(Text, nullable=True)
     reverses_transaction_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
     action_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
     quick_action_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
