@@ -8,6 +8,7 @@ from app.routes.auth import router as auth_router
 from app.routes.behavior import router as behavior_router
 from app.routes.behavior_reasons import router as behavior_reasons_router
 from app.routes.classrooms import router as classroom_router
+from app.routes.jobs import router as job_router
 from app.routes.students import router as student_router
 from app.routes.scanner import router as scanner_router
 from app.routes.transactions import router as transaction_router
@@ -25,6 +26,7 @@ app.include_router(auth_router)
 app.include_router(behavior_router)
 app.include_router(behavior_reasons_router)
 app.include_router(classroom_router)
+app.include_router(job_router)
 app.include_router(student_router)
 app.include_router(scanner_router)
 app.include_router(transaction_router)
