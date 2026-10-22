@@ -135,10 +135,11 @@ def test_zip_endpoint_all_selected_scoped_and_read_only(engine):
 
     data = {"csrf_token": csrf, "image_format": "png", "selection": "all"}
     files, rows = _files(client.post(f"{root}/export.zip", data=data))
-    assert len(files) == 3
-    assert {row["command"] for row in rows} == {
-        "STUDENT:01", "QUICK:QA1", "ACTION:A01",
-    }
+    # Classrooms seed additional default actions and Quick Actions.
+    assert len(files) == len(rows) >= 3
+    assert {"STUDENT:01", "QUICK:QA1", "ACTION:A01"}.issubset({
+        row["command"] for row in rows
+    })
     assert all(value.startswith(b"\x89PNG\r\n\x1a\n") for value in files.values())
 
     selected = {**data, "selection": "selected", "image_format": "svg",
