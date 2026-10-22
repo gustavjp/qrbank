@@ -1,0 +1,82 @@
+{% extends "base.html" %}
+{% block title %}Transaction history · {{ classroom.name }} · QRBank{% endblock %}
+{% block content %}
+<p><a href="/classrooms/{{ classroom.id }}">← {{ classroom.name }}</a></p>
+<h1>Classroom transaction history</h1>
+<p class="muted">Posted ledger entries only. Rejected financial requests do not create ledger transactions. Times use {{ timezone_name }}.</p>
+
+<form method="get" action="/classrooms/{{ classroom.id }}/transactions">
+  <label>Student
+    <select name="enrollment_id">
+      <option value="">All students</option>
+      {% for student, enrollment in roster %}
+        <option value="{{ enrollment.id }}" {% if selected.enrollment_id == enrollment.id|string %}selected{% endif %}>
+          {{ enrollment.student_code }}{% if student.display_name %} — {{ student.display_name }}{% endif %}{% if not enrollment.active %} (inactive){% endif %}
+        </option>
+      {% endfor %}
+    </select>
+  </label>
+  <label>Transaction type
+    <select name="transaction_type">
+      <option value="">All types</option>
+      {% for kind in transaction_types %}
+        <option value="{{ kind }}" {% if selected.transaction_type == kind %}selected{% endif %}>{{ kind|replace("_", " ")|title }}</option>
+      {% endfor %}
+    </select>
+  </label>
+  <label>Source
+    <select name="source">
+      <option value="">All sources</option>
+      {% for kind in transaction_sources %}
+        <option value="{{ kind }}" {% if selected.source == kind %}selected{% endif %}>{{ kind|replace("_", " ")|title }}</option>
+      {% endfor %}
+    </select>
+  </label>
+  <label>Manual category
+    <select name="category">
+      <option value="">All categories</option>
+      {% for kind in manual_categories %}
+        <option value="{{ kind }}" {% if selected.category == kind %}selected{% endif %}>{{ kind|replace("_", " ")|title }}</option>
+      {% endfor %}
+    </select>
+  </label>
+  <label>From date (classroom local time)
+    <input type="date" name="date_from" value="{{ selected.date_from }}">
+  </label>
+  <label>Through date (inclusive)
+    <input type="date" name="date_to" value="{{ selected.date_to }}">
+  </label>
+  <button class="primary" type="submit">Apply filters</button>
+  <p><a href="/classrooms/{{ classroom.id }}/transactions">Clear filters / latest</a></p>
+</form>
+
+<h2>Posted transactions{% if rows %} ({{ rows|length }} on this page){% endif %}</h2>
+{% if rows %}
+  <div style="display:grid; gap:.65rem;">
+    {% for row in rows %}
+      {% set tx = row.transaction %}
+      <div style="border:1px solid #dfe5ec; border-radius:8px; padding:.8rem;">
+        <strong>TX{{ "%06d"|format(tx.display_number) }}</strong>
+        · {{ tx.transaction_type|replace("_", " ")|title }}
+        · <strong>{% if tx.amount > 0 %}+{% endif %}{{ tx.amount }}</strong>
+        <div><a href="/classrooms/{{ classroom.id }}/students/{{ tx.enrollment_id }}">Student {{ tx.student_code_snapshot }}</a></div>
+        <div class="muted">Balance {{ tx.balance_before }} → {{ tx.balance_after }}</div>
+        <div class="muted">{{ row.occurred_local.strftime("%Y-%m-%d %I:%M %p %Z") }} · {{ tx.source|replace("_", " ")|title }}</div>
+        {% if tx.action_code_snapshot %}<div>Action: {{ tx.action_code_snapshot }}{% if tx.action_name_snapshot %} — {{ tx.action_name_snapshot }}{% endif %}</div>{% endif %}
+        {% if tx.quick_action_code_snapshot %}<div>Quick Action: {{ tx.quick_action_code_snapshot }}</div>{% endif %}
+        {% if tx.manual_category %}<div>Category: {{ tx.manual_category|replace("_", " ")|title }}</div>{% endif %}
+        {% if tx.action_kind_snapshot %}<div>Action category: {{ tx.action_kind_snapshot|replace("_", " ")|title }}</div>{% endif %}
+        {% if tx.adjustment_target_balance is not none %}<div>Target balance: {{ tx.adjustment_target_balance }}</div>{% endif %}
+        {% if tx.note %}<div>Note: {{ tx.note }}</div>{% endif %}
+        {% if row.reverses_number is not none %}<div>Reverses TX{{ "%06d"|format(row.reverses_number) }}</div>{% endif %}
+        {% if row.reversed_by_number is not none %}<div class="muted">Reversed by TX{{ "%06d"|format(row.reversed_by_number) }}</div>{% endif %}
+      </div>
+    {% endfor %}
+  </div>
+  {% if next_url %}
+    <p><a href="{{ next_url }}">Older transactions →</a></p>
+  {% endif %}
+{% else %}
+  <p class="muted">No posted transactions match these filters.</p>
+{% endif %}
+{% endblock %}
