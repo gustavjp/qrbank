@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% block title %}Students · {{ classroom.name }} · QRBank{% endblock %}
+{% block content %}
+<p><a href="/classrooms/{{ classroom.id }}">← {{ classroom.name }}</a></p>
+<div style="display:flex; justify-content:space-between; align-items:center; gap:1rem;">
+  <div>
+    <h1 style="margin-bottom:.25rem;">Students</h1>
+    <p class="muted" style="margin-top:0;">{{ classroom.school_year }} · Your role: {{ access.membership.role }}</p>
+  </div>
+  {% if can_manage %}
+    <a href="/classrooms/{{ classroom.id }}/students/new">Add student</a>
+  {% endif %}
+</div>
+
+<p>
+  <a href="/classrooms/{{ classroom.id }}/students?show=active">Active only</a>
+  ·
+  <a href="/classrooms/{{ classroom.id }}/students?show=all">All</a>
+</p>
+
+{% if rows %}
+  <div style="display:grid; gap:.75rem;">
+  {% for student, enrollment in rows %}
+    <div style="border:1px solid #dfe5ec; border-radius:10px; padding:1rem;">
+      <div style="display:flex; justify-content:space-between; gap:1rem;">
+        <div>
+          <strong>{{ student.display_name or ("Student " ~ enrollment.student_code) }}</strong>
+          <div class="muted">Code: {{ enrollment.student_code }}</div>
+          <div>Balance: <strong>{{ enrollment.current_balance }}</strong></div>
+          <div>Status: <strong>{{ "Active" if enrollment.active else "Inactive" }}</strong></div>
+        </div>
+        <div>
+          <a href="/classrooms/{{ classroom.id }}/students/{{ enrollment.id }}">Open</a>
+        </div>
+      </div>
+    </div>
+  {% endfor %}
+  </div>
+{% else %}
+  <p class="muted">No students match this view.</p>
+{% endif %}
+{% endblock %}

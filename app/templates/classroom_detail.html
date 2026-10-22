@@ -14,6 +14,9 @@
   </form>
 {% endif %}
 
+<h2>Students</h2>
+<p><a href="/classrooms/{{ classroom.id }}/students">View student enrollments</a></p>
+
 <h2>Current settings</h2>
 <p>Starting balance for new enrollments: <strong>{{ settings.starting_balance }}</strong></p>
 <p>Negative balances: <strong>{{ "Allowed" if settings.allow_negative_balance else "Not allowed" }}</strong></p>

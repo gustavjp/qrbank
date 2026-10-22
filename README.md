@@ -25,10 +25,14 @@ The current application includes:
 - active classroom selection
 - owner-only classroom settings management
 - strict server-side membership authorization for every classroom read/write
+- student enrollment list/create/detail/edit flows
+- classroom-scoped student codes with active/inactive status
+- central opening-balance financial posting service with PostgreSQL row locking and idempotency
+- immutable opening-balance ledger history with stored balance cache updates in the same transaction
 - health and readiness endpoints
 - PostgreSQL-backed automated tests
 
-Student banking, QR scanning, financial service code, rewards UI, password reset, and a production email provider are intentionally not implemented yet.
+QR scanning, normal/manual transaction flows, rewards UI, scheduled payments, password reset, and a production email provider are intentionally not implemented yet.
 
 ## Local setup
 
@@ -98,6 +102,9 @@ The integration test suite requires a disposable PostgreSQL database. GitHub Act
 - pending/unverified accounts cannot create authenticated sessions
 - the active-classroom cookie stores context only; it never grants access
 - classroom access is re-checked against active ClassroomMembership rows on the server
+- nonzero enrollment starting balances are posted as immutable opening-balance transactions
+- zero starting balances do not create fake zero-value ledger rows
+- student code/status changes are audited; financial history snapshots are not rewritten
 
 ## Design documents
 

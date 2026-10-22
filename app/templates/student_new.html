@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block title %}Add student · QRBank{% endblock %}
+{% block content %}
+{% set cid = classroom.id if classroom else classroom_id %}
+<p><a href="/classrooms/{{ cid }}/students">← Students</a></p>
+<h1>Add student</h1>
+<p class="muted">A legal name is not required. The classroom student code is the value encoded in the student's QR command.</p>
+{% if error %}<p class="error">{{ error }}</p>{% endif %}
+<form method="post" action="/classrooms/{{ cid }}/students/new">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+  <label>Student code
+    <input type="text" name="student_code" required maxlength="32" value="{{ student_code or '' }}" placeholder="01">
+  </label>
+  <p class="muted">Allowed: letters, numbers, underscores, and hyphens. Letters are stored uppercase.</p>
+  <label>Display name (optional)
+    <input type="text" name="display_name" value="{{ display_name or '' }}" placeholder="Alex">
+  </label>
+  <label>Classroom notes (optional)
+    <input type="text" name="notes" value="{{ notes or '' }}">
+  </label>
+  <button class="primary" type="submit">Add student</button>
+</form>
+{% endblock %}

@@ -293,3 +293,46 @@ def test_tampered_active_classroom_cookie_does_not_grant_access(engine) -> None:
 
     detail = other_client.get(f"/classrooms/{classroom_id}")
     assert detail.status_code == 404
+
+
+def test_negative_starting_balance_requires_negative_balances_enabled(engine) -> None:
+    client, owner_id = _logged_in_client(engine)
+
+    with Session(engine) as db, db.begin():
+        classroom = create_classroom_for_owner(
+            db,
+            owner_user_id=owner_id,
+            name="Negative Balance Guard",
+            school_year="2026-2027",
+        )
+        classroom_id = classroom.id
+
+    client.get(f"/classrooms/{classroom_id}/settings")
+    rejected = client.post(
+        f"/classrooms/{classroom_id}/settings",
+        data={
+            "name": "Negative Balance Guard",
+            "school_year": "2026-2027",
+            "timezone": "America/New_York",
+            "starting_balance": "-5",
+            "weekly_allowance_amount": "20",
+            "weekly_allowance_day": "0",
+            "weekly_allowance_time": "06:00",
+            "weekly_wage_day": "0",
+            "weekly_wage_time": "06:10",
+            "sound_enabled": "1",
+            "duplicate_scan_seconds": "0",
+            "student_selection_timeout_seconds": "120",
+            "confirm_balance_reset": "1",
+            "csrf_token": _csrf(client),
+        },
+    )
+
+    assert rejected.status_code == 400
+    assert "starting balance cannot be negative" in rejected.text
+
+    with Session(engine) as db:
+        classroom_settings = db.get(ClassroomSettings, classroom_id)
+        assert classroom_settings is not None
+        assert classroom_settings.starting_balance == 0
+        assert classroom_settings.allow_negative_balance is False

@@ -228,6 +228,10 @@ def update_classroom_configuration_for_owner(
         raise ClassroomValidationError("duplicate scan seconds cannot be negative")
     if student_selection_timeout_seconds <= 0:
         raise ClassroomValidationError("student selection timeout must be positive")
+    if starting_balance < 0 and not allow_negative_balance:
+        raise ClassroomValidationError(
+            "starting balance cannot be negative while negative balances are disabled"
+        )
 
     before_snapshot = _configuration_snapshot(access.classroom, settings)
 
