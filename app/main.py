@@ -14,6 +14,7 @@ from app.routes.reward_purchases import router as reward_purchase_router
 from app.routes.job_assignments import router as assignment_router
 from app.routes.students import router as student_router
 from app.routes.scanner import router as scanner_router
+from app.routes.qr_codes import router as qr_codes_router
 from app.routes.transactions import router as transaction_router
 
 
@@ -35,6 +36,7 @@ app.include_router(reward_purchase_router)
 app.include_router(assignment_router)
 app.include_router(student_router)
 app.include_router(scanner_router)
+app.include_router(qr_codes_router)
 app.include_router(transaction_router)
 
 
