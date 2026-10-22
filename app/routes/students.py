@@ -410,7 +410,7 @@ def add_manual_transaction(
         return RedirectResponse("/auth/login", status_code=status.HTTP_303_SEE_OTHER)
 
     # Parse ASCII integer text explicitly; decimal/floating values are never valid points.
-    points_value = int(points.strip()) if re.fullmatch(r"[0-9]+", points.strip()) else 0
+    points_value = int(points.strip()) if re.fullmatch(r"[0-9]{1,10}", points.strip()) else 0
     try:
         outcome = post_manual_transaction(
             db, actor_user_id=user.id, classroom_id=classroom_id,
