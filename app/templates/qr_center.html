@@ -27,7 +27,7 @@
 {% if students %}
   {% for student in students %}
     <div class="card">
-      <label><input type="checkbox" name="student_ids" value="{{ student.id }}"> Select for PDF</label>
+      <label><input type="checkbox" name="student_ids" value="{{ student.id }}"> Select for export</label>
       <p><strong>Student {{ student.student_code }}</strong> · <code>STUDENT:{{ student.student_code }}</code></p>
       <img src="/classrooms/{{ classroom.id }}/qr/student/{{ student.id }}/svg" width="128" height="128" alt="Student {{ student.student_code }} QR code">
       <p><a href="/classrooms/{{ classroom.id }}/qr/student/{{ student.id }}/svg?download=true">Download SVG</a>
@@ -40,7 +40,7 @@
 {% if quick_actions %}
   {% for quick, action in quick_actions %}
     <div class="card">
-      <label><input type="checkbox" name="quick_ids" value="{{ quick.id }}"> Select for PDF</label>
+      <label><input type="checkbox" name="quick_ids" value="{{ quick.id }}"> Select for export</label>
       <p><strong>{{ quick.quick_action_code }} — {{ action.name }}</strong> · <code>QUICK:{{ quick.quick_action_code }}</code></p>
       <img src="/classrooms/{{ classroom.id }}/qr/quick/{{ quick.id }}/svg" width="128" height="128" alt="Quick Action {{ quick.quick_action_code }} QR code">
       <p><a href="/classrooms/{{ classroom.id }}/qr/quick/{{ quick.id }}/svg?download=true">Download SVG</a>
@@ -53,7 +53,7 @@
 {% if actions %}
   {% for action in actions %}
     <div class="card">
-      <label><input type="checkbox" name="action_ids" value="{{ action.id }}"> Select for PDF</label>
+      <label><input type="checkbox" name="action_ids" value="{{ action.id }}"> Select for export</label>
       <p><strong>{{ action.action_code }} — {{ action.name }}</strong> · <code>ACTION:{{ action.action_code }}</code></p>
       <img src="/classrooms/{{ classroom.id }}/qr/action/{{ action.id }}/svg" width="128" height="128" alt="Action {{ action.action_code }} QR code">
       <p><a href="/classrooms/{{ classroom.id }}/qr/action/{{ action.id }}/svg?download=true">Download SVG</a>
@@ -63,5 +63,15 @@
 {% else %}<p>No active Actions.</p>{% endif %}
 <p><button type="submit" name="selection" value="selected">Print Selected (PDF)</button>
   <button type="submit" name="selection" value="all">Print All for Layout (PDF)</button></p>
+<h2>Bulk QR Image Downloads</h2>
+<p><label for="qr-image-format">Image format</label>
+  <select id="qr-image-format" name="image_format">
+    <option value="svg">SVG (best for designs)</option>
+    <option value="png">PNG</option>
+  </select>
+</p>
+<p class="muted">Download each QR image as a separate file in a ZIP. Includes a manifest with codes and labels for your classroom. ZIP packs contain all three QR types, regardless of the PDF layout. Up to 120 images per ZIP.</p>
+<p><button type="submit" name="selection" value="selected" formaction="/classrooms/{{ classroom.id }}/qr/export.zip">Download Selected (ZIP)</button>
+  <button type="submit" name="selection" value="all" formaction="/classrooms/{{ classroom.id }}/qr/export.zip">Download All (ZIP)</button></p>
 </form>
 {% endblock %}
