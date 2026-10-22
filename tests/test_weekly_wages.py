@@ -89,8 +89,11 @@ def _rows(engine, model, classroom_id):
         return list(db.scalars(select(model).where(model.classroom_id == classroom_id)))
 
 
-def _wages(engine, now=PAYDAY):
-    return run_due_weekly_wages(session_factory=sessionmaker(bind=engine), now=now)
+def _wages(engine, now=PAYDAY, *, classroom_id: uuid.UUID):
+    return run_due_weekly_wages(
+        session_factory=sessionmaker(bind=engine), now=now,
+        classroom_id=classroom_id,
+    )
 
 
 def test_schedule_respects_classroom_local_time_and_dst() -> None:
@@ -126,11 +129,11 @@ def test_multiple_jobs_pay_separately_once_per_week_and_keep_snapshots(engine) -
         a2 = _assign(db, classroom, alice, second)
         _assign(db, classroom, bob, first)
 
-    before = _wages(engine, PAYDAY - timedelta(hours=1))
+    before = _wages(engine, PAYDAY - timedelta(hours=1), classroom_id=classroom)
     assert before.classrooms_due == 0
     assert _rows(engine, FinancialTransaction, classroom) == []
 
-    first_run = _wages(engine)
+    first_run = _wages(engine, classroom_id=classroom)
     assert first_run.payments_posted == 3
     assert first_run.payments_failed == 0
     txs = _rows(engine, FinancialTransaction, classroom)
@@ -144,7 +147,7 @@ def test_multiple_jobs_pay_separately_once_per_week_and_keep_snapshots(engine) -
         assert db.get(Enrollment, bob).current_balance == 12
         assert {p.period_key for p in _rows(engine, ScheduledPayment, classroom)} == {"2031-01-06"}
 
-    again = _wages(engine)
+    again = _wages(engine, classroom_id=classroom)
     assert again.payments_posted == 0 and again.payments_replayed == 3
     assert len(_rows(engine, FinancialTransaction, classroom)) == 3
     with Session(engine) as db, db.begin():
@@ -152,10 +155,10 @@ def test_multiple_jobs_pay_separately_once_per_week_and_keep_snapshots(engine) -
         job.name = "Renamed"
         job.weekly_wage = 20
 
-    assert _wages(engine).payments_replayed == 3
+    assert _wages(engine, classroom_id=classroom).payments_replayed == 3
     assert all(tx.job_name_snapshot == "Job J01" for tx in _rows(engine, FinancialTransaction, classroom)
                if tx.job_assignment_id == a1)
-    future = _wages(engine, PAYDAY + timedelta(days=7))
+    future = _wages(engine, PAYDAY + timedelta(days=7), classroom_id=classroom)
     assert future.payments_posted == 3
     assert len(_rows(engine, FinancialTransaction, classroom)) == 6
     with Session(engine) as db:
@@ -171,7 +174,7 @@ def test_zero_wage_reserves_period_without_fake_ledger_entry(engine) -> None:
         student = _enrollment(db, classroom, "01")
         job_id = _job(db, classroom, "ZERO", 0)
         _assign(db, classroom, student, job_id)
-    first = _wages(engine)
+    first = _wages(engine, classroom_id=classroom)
     assert first.payments_posted == 1
     payments = _rows(engine, ScheduledPayment, classroom)
     assert len(payments) == 1
@@ -181,9 +184,9 @@ def test_zero_wage_reserves_period_without_fake_ledger_entry(engine) -> None:
 
     with Session(engine) as db, db.begin():
         db.get(Job, job_id).weekly_wage = 9
-    assert _wages(engine).payments_replayed == 1
+    assert _wages(engine, classroom_id=classroom).payments_replayed == 1
     assert _rows(engine, FinancialTransaction, classroom) == []
-    assert _wages(engine, PAYDAY + timedelta(days=7)).payments_posted == 1
+    assert _wages(engine, PAYDAY + timedelta(days=7), classroom_id=classroom).payments_posted == 1
     assert _rows(engine, FinancialTransaction, classroom)[0].amount == 9
 
 
@@ -207,7 +210,7 @@ def test_inactive_cross_tenant_and_late_assignments_are_excluded(engine) -> None
         other_job = _job(db, b, "FOREIGN", 25)
         _assign(db, b, other_student, other_job)
 
-    summary = _wages(engine)
+    summary = _wages(engine, classroom_id=a)
     assert summary.classrooms_due == 1 and summary.payments_posted == 1
     assert len(_rows(engine, FinancialTransaction, a)) == 1
     assert _rows(engine, FinancialTransaction, b) == []
@@ -227,7 +230,7 @@ def test_partial_failure_rolls_back_and_next_run_retries_missing_payment(engine)
         _assign(db, classroom, overflow, big_job)
         _assign(db, classroom, regular, normal_job)
 
-    first = _wages(engine)
+    first = _wages(engine, classroom_id=classroom)
     assert first.payments_failed == 1 and first.payments_posted == 1
     assert len(_rows(engine, FinancialRequest, classroom)) == 1
     assert len(_rows(engine, FinancialTransaction, classroom)) == 1
@@ -236,7 +239,7 @@ def test_partial_failure_rolls_back_and_next_run_retries_missing_payment(engine)
     with Session(engine) as db, db.begin():
         db.get(Job, big_job).weekly_wage = 1
 
-    retry = _wages(engine)
+    retry = _wages(engine, classroom_id=classroom)
     assert retry.payments_failed == 0
     assert retry.payments_posted == 1 and retry.payments_replayed == 1
     assert len(_rows(engine, ScheduledPayment, classroom)) == 2
@@ -253,7 +256,7 @@ def test_simultaneous_scheduler_invocations_cannot_double_pay(engine) -> None:
         _assign(db, classroom, student, job_id)
 
     with ThreadPoolExecutor(max_workers=2) as pool:
-        runs = list(pool.map(lambda _: _wages(engine), range(2)))
+        runs = list(pool.map(lambda _: _wages(engine, classroom_id=classroom), range(2)))
     assert sum(r.payments_posted for r in runs) == 1
     assert sum(r.payments_replayed for r in runs) == 1
     assert len(_rows(engine, FinancialTransaction, classroom)) == 1

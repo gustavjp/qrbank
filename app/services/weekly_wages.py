@@ -52,6 +52,7 @@ def run_due_weekly_wages(
     *,
     session_factory: sessionmaker[Session] = SessionLocal,
     now: datetime | None = None,
+    classroom_id: uuid.UUID | None = None,
 ) -> WageRunSummary:
     """Run in a separate scheduled process, not inside FastAPI web workers.
 
@@ -63,13 +64,16 @@ def run_due_weekly_wages(
         raise ValueError("scheduler clock must be timezone-aware")
 
     with session_factory() as db:
-        classrooms = list(db.execute(
+        stmt = (
             select(Classroom.id, ClassroomSettings)
             .join(ClassroomSettings, ClassroomSettings.classroom_id == Classroom.id)
             .where(Classroom.archived_at.is_(None),
                    ClassroomSettings.weekly_wages_enabled.is_(True))
             .order_by(Classroom.id)
-        ))
+        )
+        if classroom_id is not None:
+            stmt = stmt.where(Classroom.id == classroom_id)
+        classrooms = list(db.execute(stmt))
 
     totals = {"classrooms_due": 0, "payments_posted": 0,
               "payments_replayed": 0, "payments_skipped": 0, "payments_failed": 0}
