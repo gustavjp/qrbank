@@ -6,7 +6,7 @@
 <p class="muted">{{ classroom.school_year }} · Your role: {{ access.membership.role }}</p>
 
 {% if is_active %}
-  <p class="success"><strong>Active classroom.</strong> Scan Mode uses this classroom context. Scan actions are preview-only until financial execution is enabled.</p>
+  <p class="success"><strong>Active classroom.</strong> Scan Mode uses this classroom context. Scan Mode posts eligible actions through the financial ledger.</p>
 {% else %}
   <form method="post" action="/classrooms/{{ classroom.id }}/select">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
@@ -17,11 +17,14 @@
 <h2>Students</h2>
 <p><a href="/classrooms/{{ classroom.id }}/students">View student enrollments</a></p>
 
+<h2>Transactions</h2>
+<p><a href="/classrooms/{{ classroom.id }}/transactions">View classroom ledger and filter transaction history</a></p>
+
 <h2>Actions</h2>
 <p><a href="/classrooms/{{ classroom.id }}/actions">Configure Actions and Quick Actions</a></p>
 
 <h2>Scan Mode</h2>
-<p><a href="/classrooms/{{ classroom.id }}/scan">Open Scan Mode (read-only preview)</a></p>
+<p><a href="/classrooms/{{ classroom.id }}/scan">Open Scan Mode</a></p>
 
 <h2>Current settings</h2>
 <p>Starting balance for new enrollments: <strong>{{ settings.starting_balance }}</strong></p>
