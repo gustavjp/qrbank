@@ -4,6 +4,12 @@
 <p><a href="/classrooms/{{ classroom.id }}">← {{ classroom.name }}</a></p>
 <h1>Actions and Quick Actions</h1>
 <p class="muted">Actions define amounts. Quick Actions map a reusable QR code to one Action. No points are transferred on this page.</p>
+{% if can_manage %}
+<form method="post" action="/classrooms/{{ classroom.id }}/actions/defaults">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+  <button class="secondary" type="submit">Install QA1–QA10 defaults (without replacing custom mappings)</button>
+</form>
+{% endif %}
 
 <h2>Actions</h2>
 {% if actions %}

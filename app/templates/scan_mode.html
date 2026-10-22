@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% block title %}Scan Mode · {{ classroom.name }} · QRBank{% endblock %}
+{% block content %}
+<p><a href="/classrooms/{{ classroom.id }}">← {{ classroom.name }}</a></p>
+<h1>Scan Mode</h1>
+<p class="success"><strong>Active classroom: {{ classroom.name }}</strong> ({{ classroom.school_year }})</p>
+<p class="error"><strong>Preview-only milestone.</strong> Quick Action and Action scans show the configured operation but do not post points or transactions.</p>
+
+{% if selected %}
+  <p><strong>Student {{ selected.student_code }}</strong> selected · Balance {{ selected.current_balance }}</p>
+{% else %}
+  <p class="muted">No student selected. Scan STUDENT:01 first.</p>
+{% endif %}
+{% if error %}<p class="error">{{ error }}</p>{% endif %}
+{% if result and result.action %}
+  <p class="success">Resolved {{ result.command }}:{{ result.code }} → {{ result.action.name }}
+    ({{ "+" if result.action.amount > 0 else "" }}{{ result.action.amount }} points).
+    <strong>No balance change was made.</strong>
+  </p>
+{% elif result %}
+  <p class="success">Student {{ result.enrollment.student_code }} selected.</p>
+{% endif %}
+
+<form id="scan-form" method="post" action="/classrooms/{{ classroom.id }}/scan/resolve">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+  <input type="hidden" name="selected_enrollment_id" value="{{ selected.id if selected else '' }}">
+  <label>Scanner input
+    <input id="scanner-input" name="payload" required autocomplete="off"
+           autofocus placeholder="STUDENT:01, QUICK:QA1, or ACTION:A01">
+  </label>
+  <p class="muted">USB scanners that type the QR payload and press Enter can use this input directly. Click the field to resume scanner entry.</p>
+  <button class="primary" id="scan-submit" type="submit">Resolve scan</button>
+</form>
+<p id="scanner-status" class="muted" role="status">READY</p>
+<script>
+  const form = document.getElementById("scan-form");
+  form.addEventListener("submit", function () {
+    document.getElementById("scanner-status").textContent = "PROCESSING";
+    document.getElementById("scan-submit").disabled = true;
+  });
+</script>
+{% endblock %}
