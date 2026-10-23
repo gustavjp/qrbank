@@ -12,6 +12,7 @@ $logStamp = Get-Date -Format 'yyyyMMdd-HHmmss'
 $outputLog = Join-Path $logDirectory "preview-$logStamp.stdout.log"
 $errorLog = Join-Path $logDirectory "preview-$logStamp.stderr.log"
 $preflightLog = Join-Path $logDirectory "preview-$logStamp.preflight.log"
+$preflightErrorLog = Join-Path $logDirectory "preview-$logStamp.preflight.stderr.log"
 $stage = 'checking-python'
 
 try {
@@ -46,8 +47,13 @@ try {
     Set-Location -LiteralPath $repoRoot
     # Preflight has no external side effects and intentionally blocks production.
     $stage = 'running-preflight'
-    & $python 'deploy\check_environment.py' | Out-File -LiteralPath $preflightLog -Encoding utf8
-    if ($LASTEXITCODE -ne 0) {
+    $preflightProcess = Start-Process -FilePath $python `
+        -ArgumentList @('deploy\check_environment.py') `
+        -WorkingDirectory $repoRoot `
+        -RedirectStandardOutput $preflightLog `
+        -RedirectStandardError $preflightErrorLog `
+        -PassThru -Wait
+    if ($preflightProcess.ExitCode -ne 0) {
         throw 'QRBank configuration preflight failed.'
     }
 
