@@ -252,3 +252,65 @@ def test_password_reset_url_uses_public_base_url(monkeypatch) -> None:
     assert build_password_reset_url("hello +/?") == (
         "https://school.example.test/auth/reset-password?token=hello%20%2B%2F%3F"
     )
+
+
+def test_password_reset_smtp_failure_remains_non_enumerating(engine, monkeypatch) -> None:
+    from app.email_delivery import EmailDeliveryFailed
+
+    monkeypatch.setattr("app.routes.auth.email_delivery_is_available", lambda: True)
+
+    def fail_delivery(*, email: str, token: str) -> None:
+        raise EmailDeliveryFailed("temporary SMTP failure")
+
+    monkeypatch.setattr("app.routes.auth.send_password_reset_email", fail_delivery)
+    client = TestClient(app, follow_redirects=False)
+    client.get("/auth/forgot-password")
+
+    unknown = client.post(
+        "/auth/forgot-password",
+        data={"email": "not-registered@example.test", "csrf_token": _csrf(client)},
+    )
+
+    with Session(engine) as db, db.begin():
+        user = _active_user(db)
+        known_email = user.email
+
+    known = client.post(
+        "/auth/forgot-password",
+        data={"email": known_email, "csrf_token": _csrf(client)},
+    )
+    assert known.status_code == unknown.status_code == 303
+    assert known.headers["location"] == unknown.headers["location"] == "/auth/reset-requested"
+
+
+def test_resend_verification_smtp_failure_remains_non_enumerating(engine, monkeypatch) -> None:
+    from app.email_delivery import EmailDeliveryFailed
+
+    monkeypatch.setattr("app.routes.auth.email_delivery_is_available", lambda: True)
+
+    def fail_delivery(*, email: str, token: str) -> None:
+        raise EmailDeliveryFailed("temporary SMTP failure")
+
+    monkeypatch.setattr("app.routes.auth.send_verification_email", fail_delivery)
+    client = TestClient(app, follow_redirects=False)
+    client.get("/auth/register")
+
+    unknown = client.post(
+        "/auth/resend-verification",
+        data={"email": "not-registered@example.test", "csrf_token": _csrf(client)},
+    )
+
+    with Session(engine) as db, db.begin():
+        pending = register_user(
+            db,
+            email=f"pending-smtp-{uuid.uuid4()}@example.test",
+            password="valid-password-123",
+        )
+        known_email = pending.email
+
+    known = client.post(
+        "/auth/resend-verification",
+        data={"email": known_email, "csrf_token": _csrf(client)},
+    )
+    assert known.status_code == unknown.status_code == 303
+    assert known.headers["location"] == unknown.headers["location"] == "/auth/check-email"
