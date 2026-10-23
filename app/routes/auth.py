@@ -228,8 +228,8 @@ def request_password_reset(
     db: Session = Depends(get_db),
 ):
     validate_csrf(request, csrf_token)
-    # In the current release, the only configured delivery is development console.
-    # Check before looking up the account so production errors reveal nothing.
+    # Check delivery configuration before looking up an account to avoid
+    # exposing whether the submitted address belongs to a teacher.
     if not email_delivery_is_available():
         return _form_response(
             request,
