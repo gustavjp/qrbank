@@ -110,6 +110,20 @@ class SMTPDeliveryTests(unittest.TestCase):
         self.assertNotIn("sensitive-token", text)
         self.assertNotIn("very-secret-smtp-password", text)
 
+    def test_malformed_recipient_header_fails_before_network_send(self):
+        with patch("app.email_delivery.settings", _settings()), patch(
+            "app.email_delivery.smtplib.SMTP"
+        ) as connection, patch("app.email_delivery.logger.error") as logged_error:
+            with self.assertRaises(EmailDeliveryFailed):
+                send_password_reset_email(
+                    email="teacher@example.test\r\nBcc: other@example.test",
+                    token="sensitive-token",
+                )
+
+        connection.assert_not_called()
+        logged_error.assert_called_once()
+        self.assertNotIn("sensitive-token", str(logged_error.call_args))
+
     def test_environment_defaults_to_starttls_and_587(self):
         with patch.dict("os.environ", {"QRBANK_SMTP_SECURITY": "starttls"}, clear=True):
             config = load_settings()
