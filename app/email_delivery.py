@@ -62,13 +62,13 @@ def _send_smtp_email(*, email: str, subject: str, body: str) -> None:
     if not _smtp_is_configured():
         raise EmailDeliveryNotConfigured("SMTP email delivery is not configured")
 
-    message = EmailMessage()
-    message["From"] = settings.smtp_from_address
-    message["To"] = email
-    message["Subject"] = subject
-    message.set_content(body)
-
     try:
+        message = EmailMessage()
+        message["From"] = settings.smtp_from_address
+        message["To"] = email
+        message["Subject"] = subject
+        message.set_content(body)
+
         if settings.smtp_security == "ssl":
             connection = smtplib.SMTP_SSL(
                 settings.smtp_host, settings.smtp_port, timeout=10,
@@ -84,7 +84,7 @@ def _send_smtp_email(*, email: str, subject: str, body: str) -> None:
                 smtp.ehlo()
             smtp.login(settings.smtp_username, settings.smtp_password)
             smtp.send_message(message)
-    except (OSError, smtplib.SMTPException) as exc:
+    except (OSError, smtplib.SMTPException, ValueError) as exc:
         # Never log the message body, token-bearing link, or SMTP password.
         logger.error("SMTP message delivery failed (%s)", type(exc).__name__)
         raise EmailDeliveryFailed("email delivery failed") from None
