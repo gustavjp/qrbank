@@ -10,7 +10,7 @@ from app.config import settings
 from app.csrf import csrf_token_for_request, set_csrf_cookie, validate_csrf
 from app.database import get_db
 from app.email_delivery import (
-    EmailDeliveryNotConfigured,
+    EmailDeliveryError,
     email_delivery_is_available,
     send_password_reset_email,
     send_verification_email,
@@ -121,7 +121,7 @@ def register(
 
     try:
         send_verification_email(email=user.email, token=verification.token)
-    except EmailDeliveryNotConfigured:
+    except EmailDeliveryError:
         return _form_response(
             request,
             template_name="email_delivery_error.html",
@@ -144,6 +144,12 @@ def resend_verification(
     db: Session = Depends(get_db),
 ):
     validate_csrf(request, csrf_token)
+    if not email_delivery_is_available():
+        return _form_response(
+            request,
+            template_name="email_delivery_error.html",
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        )
 
     try:
         user = find_pending_verification_user(db, email=email)
@@ -155,12 +161,9 @@ def resend_verification(
         db.commit()
         try:
             send_verification_email(email=user.email, token=verification.token)
-        except EmailDeliveryNotConfigured:
-            return _form_response(
-                request,
-                template_name="email_delivery_error.html",
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            )
+        except EmailDeliveryError:
+            # A generic redirect avoids revealing whether this email has an account.
+            pass
 
     return RedirectResponse("/auth/check-email", status_code=status.HTTP_303_SEE_OTHER)
 
@@ -242,7 +245,11 @@ def request_password_reset(
         created = None
 
     if created is not None:
-        send_password_reset_email(email=created.recipient_email, token=created.token)
+        try:
+            send_password_reset_email(email=created.recipient_email, token=created.token)
+        except EmailDeliveryError:
+            # Keep the same response for known and unknown addresses on mail errors.
+            pass
 
     return RedirectResponse("/auth/reset-requested", status_code=status.HTTP_303_SEE_OTHER)
 
