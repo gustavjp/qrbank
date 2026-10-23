@@ -1,6 +1,13 @@
 """Configuration checks do not require PostgreSQL or a Windows host."""
 
-from deploy.check_environment import validate_environment
+from pathlib import Path
+from runpy import run_path
+
+
+# The deployment utility is intentionally outside the installed `app` package.
+validate_environment = run_path(
+    str(Path(__file__).resolve().parents[1] / "deploy" / "check_environment.py")
+)["validate_environment"]
 
 
 def _development_env() -> dict[str, str]:
