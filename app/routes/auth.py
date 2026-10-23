@@ -9,18 +9,26 @@ from app.auth_context import current_user_from_request
 from app.config import settings
 from app.csrf import csrf_token_for_request, set_csrf_cookie, validate_csrf
 from app.database import get_db
-from app.email_delivery import EmailDeliveryNotConfigured, send_verification_email
+from app.email_delivery import (
+    EmailDeliveryNotConfigured,
+    email_delivery_is_available,
+    send_password_reset_email,
+    send_verification_email,
+)
 from app.services.auth import (
     DuplicateEmailError,
     EmailVerificationRequiredError,
     InvalidCredentialsError,
+    InvalidPasswordResetTokenError,
     InvalidVerificationTokenError,
     WeakPasswordError,
     authenticate_user,
     create_email_verification_token,
+    create_password_reset_token,
     create_user_session,
     find_pending_verification_user,
     register_user,
+    reset_password_with_token,
     revoke_user_session,
     verify_email_token,
 )
@@ -46,6 +54,14 @@ def _form_response(
         status_code=status_code,
     )
     set_csrf_cookie(response, csrf_token)
+    return response
+
+
+def _private_reset_form_response(request: Request, **kwargs):
+    response = _form_response(request, **kwargs)
+    response.headers["Cache-Control"] = "no-store"
+    response.headers["Referrer-Policy"] = "no-referrer"
+    response.headers["X-Robots-Tag"] = "noindex, nofollow"
     return response
 
 
@@ -185,15 +201,121 @@ def verify_email(
 
 
 @router.get("/auth/login")
-def login_page(request: Request, verified: int = 0, db: Session = Depends(get_db)):
+def login_page(request: Request, verified: int = 0, reset: int = 0, db: Session = Depends(get_db)):
     if current_user_from_request(request, db) is not None:
         return RedirectResponse("/dashboard", status_code=status.HTTP_303_SEE_OTHER)
 
     return _form_response(
         request,
         template_name="login.html",
-        context={"verified": bool(verified)},
+        context={"verified": bool(verified), "password_reset": bool(reset)},
     )
+
+
+@router.get("/auth/forgot-password")
+def forgot_password_page(request: Request):
+    return _form_response(request, template_name="forgot_password.html")
+
+
+@router.post("/auth/forgot-password")
+def request_password_reset(
+    request: Request,
+    email: str = Form(...),
+    csrf_token: str = Form(...),
+    db: Session = Depends(get_db),
+):
+    validate_csrf(request, csrf_token)
+    # In the current release, the only configured delivery is development console.
+    # Check before looking up the account so production errors reveal nothing.
+    if not email_delivery_is_available():
+        return _form_response(
+            request,
+            template_name="email_delivery_error.html",
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        )
+
+    try:
+        created = create_password_reset_token(db, email=email)
+        db.commit()
+    except ValueError:
+        db.rollback()
+        created = None
+
+    if created is not None:
+        send_password_reset_email(email=created.recipient_email, token=created.token)
+
+    return RedirectResponse("/auth/reset-requested", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@router.get("/auth/reset-requested")
+def password_reset_requested_page(request: Request):
+    return _form_response(request, template_name="password_reset_requested.html")
+
+
+@router.get("/auth/reset-password")
+def reset_password_page(request: Request, token: str):
+    return _private_reset_form_response(
+        request,
+        template_name="reset_password.html",
+        context={"reset_token": token},
+    )
+
+
+@router.post("/auth/reset-password")
+def reset_password(
+    request: Request,
+    token: str = Form(...),
+    password: str = Form(...),
+    password_confirm: str = Form(...),
+    csrf_token: str = Form(...),
+    db: Session = Depends(get_db),
+):
+    validate_csrf(request, csrf_token)
+    if password != password_confirm:
+        return _private_reset_form_response(
+            request,
+            template_name="reset_password.html",
+            context={"reset_token": token, "error": "Passwords do not match."},
+            status_code=status.HTTP_400_BAD_REQUEST,
+        )
+
+    try:
+        reset_password_with_token(db, token=token, password=password)
+        db.commit()
+    except WeakPasswordError as exc:
+        db.rollback()
+        return _private_reset_form_response(
+            request,
+            template_name="reset_password.html",
+            context={"reset_token": token, "error": str(exc)},
+            status_code=status.HTTP_400_BAD_REQUEST,
+        )
+    except (InvalidPasswordResetTokenError, ValueError):
+        db.rollback()
+        return _private_reset_form_response(
+            request,
+            template_name="password_reset_invalid.html",
+            status_code=status.HTTP_400_BAD_REQUEST,
+        )
+
+    response = RedirectResponse("/auth/login?reset=1", status_code=status.HTTP_303_SEE_OTHER)
+    response.delete_cookie(
+        settings.session_cookie_name,
+        path="/",
+        secure=settings.session_cookie_secure,
+        httponly=True,
+        samesite="lax",
+    )
+    response.delete_cookie(
+        settings.active_classroom_cookie_name,
+        path="/",
+        secure=settings.session_cookie_secure,
+        httponly=True,
+        samesite="lax",
+    )
+    response.headers["Cache-Control"] = "no-store"
+    response.headers["Referrer-Policy"] = "no-referrer"
+    return response
 
 
 @router.post("/auth/login")

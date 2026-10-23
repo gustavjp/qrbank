@@ -22,6 +22,7 @@ class Settings:
     session_cookie_secure: bool
     csrf_cookie_name: str
     verification_token_ttl_seconds: int
+    password_reset_token_ttl_seconds: int
     email_delivery_mode: str
 
 
@@ -47,6 +48,9 @@ def load_settings() -> Settings:
         csrf_cookie_name=os.getenv("QRBANK_CSRF_COOKIE_NAME", "qrbank_csrf"),
         verification_token_ttl_seconds=int(
             os.getenv("QRBANK_VERIFICATION_TOKEN_TTL_SECONDS", str(60 * 60 * 24))
+        ),
+        password_reset_token_ttl_seconds=int(
+            os.getenv("QRBANK_PASSWORD_RESET_TOKEN_TTL_SECONDS", str(60 * 30))
         ),
         email_delivery_mode=os.getenv("QRBANK_EMAIL_DELIVERY_MODE", "console"),
     )
