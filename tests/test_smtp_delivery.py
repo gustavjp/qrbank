@@ -1,6 +1,5 @@
 """Real SMTP is mocked: tests never send network email."""
 
-import logging
 import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -102,11 +101,12 @@ class SMTPDeliveryTests(unittest.TestCase):
     def test_transport_failure_does_not_log_token_or_password(self):
         with patch("app.email_delivery.settings", _settings()), patch(
             "app.email_delivery.smtplib.SMTP", side_effect=OSError("connection refused")
-        ), self.assertLogs("qrbank.email", level=logging.ERROR) as logs:
+        ), patch("app.email_delivery.logger.error") as logged_error:
             with self.assertRaises(EmailDeliveryFailed):
                 send_password_reset_email(email="teacher@example.test", token="sensitive-token")
 
-        text = " ".join(logs.output)
+        logged_error.assert_called_once()
+        text = " ".join(str(value) for value in logged_error.call_args.args)
         self.assertNotIn("sensitive-token", text)
         self.assertNotIn("very-secret-smtp-password", text)
 
