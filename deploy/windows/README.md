@@ -2,9 +2,9 @@
 
 This checklist targets an OVHcloud Windows Server 2025 VPS. It prepares QRBank for
 deployment **without publishing the app to the internet**. The current app is
-**not ready for real teachers or student data**: verification and password-reset
-emails have no production delivery provider, and mobile-camera scanning still
-needs physical-device testing.
+**not ready for real teachers or student data** until an actual SMTP provider,
+HTTPS, DNS/domain verification, backups, and mobile-camera device testing are
+completed and verified.
 
 ## 1. Finish and secure Windows first
 
@@ -94,9 +94,9 @@ Run the read-only configuration preflight before connecting to PostgreSQL:
 ```
 
 The preflight reports errors without printing the database connection string.
-It intentionally rejects `QRBANK_ENVIRONMENT=production` until real email
-delivery is implemented. A successful check does **not** prove that PostgreSQL
-is reachable or the app is safe to publish.
+For production, it requires an HTTPS public URL and SMTP configuration. A
+successful check does **not** prove PostgreSQL or SMTP are reachable, that
+domain verification is complete, or that the app is safe to publish.
 
 ## 5. Migrate and test on localhost
 
@@ -119,14 +119,33 @@ Invoke-RestMethod http://127.0.0.1:8000/ready
 
 Press **Ctrl+C** in the server window to stop the preview.
 
+## Later: configure production SMTP (not for this local preview)
+
+The application can use an SMTP provider supporting authenticated TLS. Set
+`QRBANK_EMAIL_DELIVERY_MODE=smtp` alongside:
+
+| Variable | Purpose |
+| --- | --- |
+| `QRBANK_SMTP_HOST` | Provider's SMTP hostname |
+| `QRBANK_SMTP_PORT` | Usually `587` with STARTTLS or `465` with SSL |
+| `QRBANK_SMTP_SECURITY` | `starttls` (default) or `ssl`; no plaintext mode |
+| `QRBANK_SMTP_USERNAME` | Provider's SMTP credential username |
+| `QRBANK_SMTP_PASSWORD` | Provider's SMTP secret or app password |
+| `QRBANK_SMTP_FROM_ADDRESS` | Verified sender mailbox, such as `no-reply@your-domain` |
+
+Never commit SMTP credentials or put them in PowerShell history. Configure
+`QRBANK_ENVIRONMENT=production`, `QRBANK_PUBLIC_BASE_URL` to the real HTTPS
+site origin, and secure session cookies. Verify SPF, DKIM and DMARC per your
+provider's instructions, and test actual inbox delivery before opening signups.
+
 ## Next milestones — not included in this PR
 
 1. Configure domain/DNS, an HTTPS reverse proxy on port 443, and production
    server startup/restart handling. Keep the Python app on `127.0.0.1` and
    PostgreSQL unexposed. Never expose port 8000 directly.
-2. Integrate a real transactional email provider, verify domain identity and
-   deliverability, and enable verified-teacher registration/password reset.
-   Set the actual `QRBANK_PUBLIC_BASE_URL` HTTPS origin and secure cookies.
+2. Provision a transactional SMTP account, verify sender/domain identity and
+   deliverability, and test registration/password reset end to end. SMTP code
+   alone does not mean real mail can be sent yet.
 3. Add off-server database backups, monitoring and an upgrade/rollback runbook.
 4. Test QR camera scanning on an actual HTTPS-connected phone. Configure weekly
    wage/allowance Windows scheduled tasks only once classroom setup is ready.

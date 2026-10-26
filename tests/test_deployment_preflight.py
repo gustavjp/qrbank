@@ -46,11 +46,11 @@ def test_malformed_database_url_does_not_expose_password() -> None:
 
 def test_unimplemented_email_mode_is_rejected() -> None:
     env = _development_env()
-    env["QRBANK_EMAIL_DELIVERY_MODE"] = "smtp"
-    assert any("Only console" in p for p in validate_environment(env))
+    env["QRBANK_EMAIL_DELIVERY_MODE"] = "carrier-pigeon"
+    assert any("must be console or smtp" in p for p in validate_environment(env))
 
 
-def test_production_is_blocked_until_email_provider_exists() -> None:
+def test_production_requires_configured_smtp_provider() -> None:
     env = _development_env()
     env.update({
         "QRBANK_ENVIRONMENT": "production",
@@ -58,7 +58,7 @@ def test_production_is_blocked_until_email_provider_exists() -> None:
         "QRBANK_SESSION_COOKIE_SECURE": "true",
     })
     problems = validate_environment(env)
-    assert any("Production is blocked" in p for p in problems)
+    assert any("Production requires" in p for p in problems)
     assert not any("HTTPS" in p for p in problems)
 
 
@@ -71,3 +71,34 @@ def test_production_rejects_http_and_insecure_cookie_override() -> None:
     problems = validate_environment(env)
     assert any("HTTPS" in p for p in problems)
     assert any("cookies" in p for p in problems)
+
+
+def test_production_smtp_configuration_passes_local_preflight() -> None:
+    env = _development_env()
+    env.update({
+        "QRBANK_ENVIRONMENT": "production",
+        "QRBANK_PUBLIC_BASE_URL": "https://bank.example.test",
+        "QRBANK_EMAIL_DELIVERY_MODE": "smtp",
+        "QRBANK_SMTP_HOST": "smtp.example.test",
+        "QRBANK_SMTP_USERNAME": "user",
+        "QRBANK_SMTP_PASSWORD": "test-only-secret",
+        "QRBANK_SMTP_FROM_ADDRESS": "no-reply@example.test",
+        "QRBANK_SMTP_SECURITY": "starttls",
+        "QRBANK_SMTP_PORT": "587",
+    })
+    assert validate_environment(env) == []
+
+
+def test_production_smtp_rejects_missing_credentials_and_plaintext() -> None:
+    env = _development_env()
+    env.update({
+        "QRBANK_ENVIRONMENT": "production",
+        "QRBANK_PUBLIC_BASE_URL": "https://bank.example.test",
+        "QRBANK_EMAIL_DELIVERY_MODE": "smtp",
+        "QRBANK_SMTP_SECURITY": "none",
+        "QRBANK_SMTP_PORT": "invalid",
+    })
+    problems = validate_environment(env)
+    assert any("QRBANK_SMTP_PASSWORD" in p for p in problems)
+    assert any("unencrypted SMTP" in p for p in problems)
+    assert any("SMTP_PORT" in p for p in problems)

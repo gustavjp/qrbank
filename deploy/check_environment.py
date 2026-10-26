@@ -50,15 +50,31 @@ def validate_environment(env: Mapping[str, str]) -> list[str]:
         if environment == "production" and parsed_base.scheme != "https":
             problems.append("Production requires an HTTPS QRBANK_PUBLIC_BASE_URL.")
 
-    email_mode = env.get("QRBANK_EMAIL_DELIVERY_MODE", "console").strip()
+    email_mode = env.get("QRBANK_EMAIL_DELIVERY_MODE", "console").strip().lower()
     if environment == "production":
         cookie_setting = env.get("QRBANK_SESSION_COOKIE_SECURE", "").strip().lower()
         if cookie_setting in {"0", "false", "no", "off"}:
             problems.append("Production session cookies cannot be marked insecure.")
-        # As of this milestone, the application only has dev-console email delivery.
-        problems.append("Production is blocked: real verification/reset email delivery is not implemented.")
-    elif email_mode != "console":
-        problems.append("Only console email delivery is currently implemented for development.")
+    if email_mode not in {"console", "smtp"}:
+        problems.append("QRBANK_EMAIL_DELIVERY_MODE must be console or smtp.")
+    elif environment == "production" and email_mode != "smtp":
+        problems.append("Production requires a configured SMTP provider; console delivery is development-only.")
+
+    if email_mode == "smtp":
+        for variable in (
+            "QRBANK_SMTP_HOST",
+            "QRBANK_SMTP_USERNAME",
+            "QRBANK_SMTP_PASSWORD",
+            "QRBANK_SMTP_FROM_ADDRESS",
+        ):
+            if not env.get(variable, "").strip():
+                problems.append(f"Set {variable} for SMTP delivery.")
+        security = env.get("QRBANK_SMTP_SECURITY", "starttls").strip().lower()
+        if security not in {"starttls", "ssl"}:
+            problems.append("QRBANK_SMTP_SECURITY must be starttls or ssl; unencrypted SMTP is not supported.")
+        port = env.get("QRBANK_SMTP_PORT", "465" if security == "ssl" else "587")
+        if not port.isdigit() or not 1 <= int(port) <= 65535:
+            problems.append("QRBANK_SMTP_PORT must be a valid TCP port number.")
 
     return problems
 
@@ -71,8 +87,8 @@ def main() -> int:
             print(f"- {issue}")
         return 1
 
-    print("QRBank preflight: development configuration checks passed.")
-    print("This does not verify database connectivity or production readiness.")
+    print("QRBank preflight: configuration checks passed.")
+    print("This does not verify database connectivity, SMTP deliverability, or HTTPS setup.")
     return 0
 
 
